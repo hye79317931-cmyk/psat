@@ -722,3 +722,213 @@ body.solve-active {
   #solvePanel.fullscreen-solve .choice { min-height: 34px; }
   #solvePanel.fullscreen-solve > .row.wrap button { min-height: 32px; }
 }
+
+/* v6: 문제 화면 확대, 왼쪽 시계 배치, 하단 정답/채점 영역 축소 */
+#solvePanel.fullscreen-solve {
+  grid-template-columns: 66px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto auto auto auto;
+  background: #040812;
+}
+
+#solvePanel.fullscreen-solve .solve-top {
+  display: contents;
+}
+
+#solvePanel.fullscreen-solve .solve-top > div:first-child {
+  display: none;
+}
+
+#solvePanel.fullscreen-solve .note-toolbar {
+  grid-column: 1;
+  grid-row: 1 / 6;
+  padding: calc(max(8px, env(safe-area-inset-top)) + 104px) 4px max(6px, env(safe-area-inset-bottom));
+  gap: 5px;
+  background: rgba(8, 14, 25, .99);
+  border-right: 1px solid rgba(255,255,255,.12);
+}
+
+#solvePanel.fullscreen-solve .timer-box {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+  justify-self: stretch;
+  z-index: 3;
+  min-width: 0;
+  width: auto;
+  margin: max(6px, env(safe-area-inset-top)) 4px 0;
+  padding: 5px 3px;
+  border-radius: 12px;
+  text-align: center;
+  background: rgba(15, 23, 42, .98);
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 8px 20px rgba(0,0,0,.22);
+}
+
+#solvePanel.fullscreen-solve .timer-box span {
+  font-size: 9px;
+  line-height: 1.05;
+}
+
+#solvePanel.fullscreen-solve .timer-box strong {
+  display: block;
+  font-size: 16px;
+  line-height: 1.05;
+  letter-spacing: -.03em;
+}
+
+#solvePanel.fullscreen-solve .session-timer {
+  display: block;
+  font-size: 9px;
+  line-height: 1.1;
+  margin-top: 2px;
+  word-break: keep-all;
+}
+
+#solvePanel.fullscreen-solve .session-timer.hidden {
+  display: none !important;
+}
+
+#solvePanel.fullscreen-solve .mini-exit {
+  width: 100%;
+  min-height: 24px;
+  margin-top: 4px;
+  padding: 2px 3px;
+  font-size: 10px;
+}
+
+#solvePanel.fullscreen-solve .note-toolbar button,
+#solvePanel.fullscreen-solve .note-toolbar .badge {
+  min-height: 31px;
+  padding: 4px 2px;
+  font-size: 10.5px;
+}
+
+#solvePanel.fullscreen-solve .range-control {
+  padding: 4px 3px;
+  gap: 2px;
+  font-size: 9px;
+  border-radius: 10px;
+}
+
+#solvePanel.fullscreen-solve .range-control input[type=range] {
+  min-height: 20px;
+}
+
+#solvePanel.fullscreen-solve .small-badge {
+  min-height: 20px;
+  font-size: 10px;
+}
+
+#solvePanel.fullscreen-solve .tool-help {
+  display: none;
+}
+
+#solvePanel.fullscreen-solve .image-scroller {
+  grid-column: 2;
+  grid-row: 1;
+  height: 100%;
+  min-height: 0;
+}
+
+#solvePanel.fullscreen-solve .answer-box {
+  grid-column: 2;
+  grid-row: 2;
+  padding: 3px 6px;
+  gap: 4px;
+  background: rgba(7,16,31,.99);
+}
+
+#solvePanel.fullscreen-solve .choice {
+  min-height: 31px;
+  padding: 2px 4px;
+  font-size: 17px;
+  border-radius: 10px;
+}
+
+#solvePanel.fullscreen-solve > .row.wrap {
+  grid-column: 2;
+  grid-row: 3;
+  padding: 3px 6px max(3px, env(safe-area-inset-bottom));
+  gap: 4px;
+  background: rgba(7,16,31,.99);
+}
+
+#solvePanel.fullscreen-solve > .row.wrap button {
+  flex: 1 1 68px;
+  min-height: 30px;
+  padding: 3px 4px;
+  font-size: 11px;
+  border-radius: 10px;
+}
+
+#solvePanel.fullscreen-solve .result {
+  grid-column: 2;
+  grid-row: 4;
+  max-height: 10vh;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+#solvePanel.fullscreen-solve .explanation {
+  grid-column: 2;
+  grid-row: 5;
+  max-height: 18vh;
+  padding: 8px;
+  font-size: 12px;
+}
+
+@media (max-width: 520px) {
+  #solvePanel.fullscreen-solve {
+    grid-template-columns: 58px minmax(0, 1fr);
+  }
+  #solvePanel.fullscreen-solve .note-toolbar {
+    padding-top: calc(max(6px, env(safe-area-inset-top)) + 96px);
+    padding-left: 3px;
+    padding-right: 3px;
+    gap: 4px;
+  }
+  #solvePanel.fullscreen-solve .timer-box {
+    margin-left: 3px;
+    margin-right: 3px;
+    padding: 4px 2px;
+  }
+  #solvePanel.fullscreen-solve .timer-box strong {
+    font-size: 14px;
+  }
+  #solvePanel.fullscreen-solve .timer-box span,
+  #solvePanel.fullscreen-solve .session-timer {
+    font-size: 8px;
+  }
+  #solvePanel.fullscreen-solve .note-toolbar button,
+  #solvePanel.fullscreen-solve .note-toolbar .badge {
+    min-height: 29px;
+    font-size: 10px;
+  }
+  #solvePanel.fullscreen-solve .range-control {
+    font-size: 8px;
+    padding: 3px 2px;
+  }
+  #solvePanel.fullscreen-solve .choice {
+    min-height: 29px;
+    font-size: 16px;
+  }
+  #solvePanel.fullscreen-solve > .row.wrap button {
+    min-height: 28px;
+    font-size: 10.5px;
+  }
+}
+
+@media (max-height: 640px) {
+  #solvePanel.fullscreen-solve .note-toolbar {
+    padding-top: calc(max(4px, env(safe-area-inset-top)) + 86px);
+  }
+  #solvePanel.fullscreen-solve .timer-box strong { font-size: 13px; }
+  #solvePanel.fullscreen-solve .timer-box span,
+  #solvePanel.fullscreen-solve .session-timer { font-size: 8px; }
+  #solvePanel.fullscreen-solve .mini-exit { min-height: 21px; font-size: 9px; }
+  #solvePanel.fullscreen-solve .note-toolbar button,
+  #solvePanel.fullscreen-solve .note-toolbar .badge { min-height: 25px; }
+  #solvePanel.fullscreen-solve .range-control input[type=range] { min-height: 16px; }
+  #solvePanel.fullscreen-solve .choice { min-height: 27px; }
+  #solvePanel.fullscreen-solve > .row.wrap button { min-height: 26px; }
+}

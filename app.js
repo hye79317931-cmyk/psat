@@ -5,10 +5,6 @@ const DB_VERSION = 1;
 const STORES = { problems: 'problems', history: 'history' };
 const SLOW_MS = 180000;
 const WRONG_CLEAR_STREAK = 2;
-const SYNC_CONFIG_KEY = 'psat-github-sync-v1';
-const SYNC_TOMBSTONES_KEY = 'psat-github-sync-tombstones-v1';
-const SYNC_DEBOUNCE_MS = 2500;
-const SYNC_INTERVAL_MS = 30000;
 
 const $ = (id) => document.getElementById(id);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -572,7 +568,7 @@ function setDrawTool(tool) {
 }
 
 function setZoom(value) {
-  state.zoom = Math.min(5, Math.max(0.2, Number(value))); // v5: 한 화면 맞춤을 위해 20%까지 축소
+  state.zoom = Math.min(5, Math.max(0.05, Number(value))); // v6: 한 화면 맞춤을 위해 5%까지 축소
   els.imageWrap.style.width = `${state.zoom * 100}%`;
   els.zoomLabel.textContent = `${Math.round(state.zoom * 100)}%`;
   window.requestAnimationFrame(syncCanvasSize);
@@ -604,7 +600,7 @@ function fitZoomToScreen() {
   const baseWidth = scroller.clientWidth;
   const baseHeight = baseWidth * (els.problemImage.naturalHeight / els.problemImage.naturalWidth);
   const fitByHeight = (scroller.clientHeight - 12) / Math.max(1, baseHeight);
-  const fit = Math.min(1, Math.max(0.2, fitByHeight));
+  const fit = Math.min(1, Math.max(0.05, fitByHeight));
   setZoom(fit);
   scroller.scrollLeft = 0;
   scroller.scrollTop = 0;
@@ -1640,8 +1636,8 @@ function bindEvents() {
   });
   els.penSize.addEventListener('input', updateSizeLabels);
   els.eraserSize.addEventListener('input', updateSizeLabels);
-  els.zoomOutBtn.addEventListener('click', () => zoomFromCenter(-0.25));
-  els.zoomInBtn.addEventListener('click', () => zoomFromCenter(0.25));
+  els.zoomOutBtn.addEventListener('click', () => zoomFromCenter(state.zoom <= 0.35 ? -0.05 : -0.20));
+  els.zoomInBtn.addEventListener('click', () => zoomFromCenter(state.zoom < 0.35 ? 0.05 : 0.20));
   if (els.fitZoomBtn) els.fitZoomBtn.addEventListener('click', fitZoomToScreen);
   els.problemImage.addEventListener('load', () => window.requestAnimationFrame(() => {
     syncCanvasSize();
