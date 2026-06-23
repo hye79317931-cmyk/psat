@@ -272,7 +272,7 @@ textarea { resize: vertical; }
 .image-wrap {
   position: relative;
   display: inline-block;
-  min-width: 100%;
+  min-width: 0;
   vertical-align: top;
 }
 #problemImage {
@@ -488,3 +488,237 @@ textarea { resize: vertical; }
 }
 
 
+
+
+/* v5: 전체화면 문제풀이 + 왼쪽 필기 도구 */
+body.solve-active {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+#solvePanel.fullscreen-solve {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto auto;
+  gap: 0;
+  background: #060b14;
+}
+
+#solvePanel.fullscreen-solve .solve-top {
+  grid-column: 2;
+  grid-row: 1;
+  margin: 0;
+  padding: max(6px, env(safe-area-inset-top)) 8px 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(7, 16, 31, .98);
+  border-bottom: 1px solid rgba(255,255,255,.12);
+}
+
+#solvePanel.fullscreen-solve .solve-top h2 {
+  font-size: 15px;
+  margin: 0;
+}
+
+#solvePanel.fullscreen-solve .solve-top .meta {
+  max-width: 62vw;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  margin: 2px 0 0;
+}
+
+#solvePanel.fullscreen-solve .timer-box {
+  min-width: 108px;
+  padding: 5px 7px;
+  border-radius: 12px;
+  text-align: right;
+}
+
+#solvePanel.fullscreen-solve .timer-box span { font-size: 10px; }
+#solvePanel.fullscreen-solve .timer-box strong { font-size: 18px; line-height: 1.05; }
+#solvePanel.fullscreen-solve .session-timer { font-size: 10px; margin-top: 2px; }
+
+.mini-exit {
+  margin-top: 4px;
+  min-height: 26px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: rgba(255,255,255,.08);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+#solvePanel.fullscreen-solve .note-toolbar {
+  grid-column: 1;
+  grid-row: 1 / 7;
+  margin: 0;
+  padding: max(8px, env(safe-area-inset-top)) 6px max(8px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 7px;
+  overflow-y: auto;
+  background: rgba(9, 16, 29, .98);
+  border-right: 1px solid rgba(255,255,255,.14);
+}
+
+#solvePanel.fullscreen-solve .note-toolbar button,
+#solvePanel.fullscreen-solve .note-toolbar .badge {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 7px 4px;
+  font-size: 12px;
+}
+
+#solvePanel.fullscreen-solve .note-toolbar .active-tool {
+  outline: 2px solid rgba(96, 165, 250, .85);
+  outline-offset: 1px;
+}
+
+#solvePanel.fullscreen-solve .range-control {
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  font-size: 10px;
+  line-height: 1.15;
+  padding: 6px 5px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.055);
+  border: 1px solid rgba(255,255,255,.10);
+}
+
+#solvePanel.fullscreen-solve .range-control input[type=range] {
+  width: 100%;
+  min-height: 24px;
+}
+
+#solvePanel.fullscreen-solve .small-badge {
+  min-height: 24px;
+  font-size: 11px;
+}
+
+#solvePanel.fullscreen-solve .tool-help {
+  display: block;
+  padding: 4px 2px;
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: center;
+}
+
+#solvePanel.fullscreen-solve .image-scroller {
+  grid-column: 2;
+  grid-row: 2;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  background: #e5e7eb;
+}
+
+#solvePanel.fullscreen-solve .image-wrap {
+  min-width: 0;
+  background: #fff;
+}
+
+#solvePanel.fullscreen-solve .answer-box {
+  grid-column: 2;
+  grid-row: 3;
+  margin: 0;
+  padding: 6px 8px;
+  gap: 6px;
+  background: rgba(7,16,31,.98);
+  border-top: 1px solid rgba(255,255,255,.12);
+}
+
+#solvePanel.fullscreen-solve .choice {
+  min-height: 42px;
+  font-size: 19px;
+}
+
+#solvePanel.fullscreen-solve > .row.wrap {
+  grid-column: 2;
+  grid-row: 4;
+  margin: 0;
+  padding: 6px 8px max(6px, env(safe-area-inset-bottom));
+  gap: 6px;
+  background: rgba(7,16,31,.98);
+  border-top: 1px solid rgba(255,255,255,.12);
+}
+
+#solvePanel.fullscreen-solve > .row.wrap button {
+  flex: 1 1 86px;
+  min-height: 38px;
+  padding: 7px 8px;
+  font-size: 13px;
+}
+
+#solvePanel.fullscreen-solve .result {
+  grid-column: 2;
+  grid-row: 5;
+  margin: 0;
+  border-radius: 0;
+  max-height: 13vh;
+  overflow: auto;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+#solvePanel.fullscreen-solve .explanation {
+  grid-column: 2;
+  grid-row: 6;
+  margin: 0;
+  border-radius: 0;
+  max-height: 22vh;
+  overflow: auto;
+  padding: 10px;
+  font-size: 13px;
+}
+
+@media (max-width: 520px) {
+  #solvePanel.fullscreen-solve {
+    grid-template-columns: 78px minmax(0, 1fr);
+  }
+  #solvePanel.fullscreen-solve .note-toolbar {
+    padding-left: 4px;
+    padding-right: 4px;
+    gap: 5px;
+  }
+  #solvePanel.fullscreen-solve .note-toolbar button,
+  #solvePanel.fullscreen-solve .note-toolbar .badge {
+    min-height: 34px;
+    font-size: 11px;
+  }
+  #solvePanel.fullscreen-solve .range-control { font-size: 9px; padding: 5px 4px; }
+  #solvePanel.fullscreen-solve .tool-help { display: none; }
+  #solvePanel.fullscreen-solve .solve-top .meta { display: none; }
+  #solvePanel.fullscreen-solve .timer-box { min-width: 96px; }
+  #solvePanel.fullscreen-solve .choice { min-height: 39px; font-size: 18px; }
+  #solvePanel.fullscreen-solve > .row.wrap button { min-height: 35px; font-size: 12px; }
+}
+
+@media (max-height: 640px) {
+  #solvePanel.fullscreen-solve .solve-top .meta { display: none; }
+  #solvePanel.fullscreen-solve .choice { min-height: 34px; }
+  #solvePanel.fullscreen-solve > .row.wrap button { min-height: 32px; }
+}

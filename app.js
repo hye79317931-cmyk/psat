@@ -42,8 +42,10 @@ const els = {
   eraserSize: $('eraserSize'),
   eraserSizeLabel: $('eraserSizeLabel'),
   clearInkBtn: $('clearInkBtn'),
+  exitSolveBtn: $('exitSolveBtn'),
   zoomOutBtn: $('zoomOutBtn'),
   zoomInBtn: $('zoomInBtn'),
+  fitZoomBtn: $('fitZoomBtn'),
   zoomLabel: $('zoomLabel'),
   choices: $$('.choice'),
   checkBtn: $('checkBtn'),
@@ -119,6 +121,8 @@ const state = {
   activePasteTarget: 'problem',
   formProblemImageData: '',
   formExplanationImageData: '',
+  autoFitOnImageLoad: false,
+  solveFullscreenActive: false,
   syncConfig: null,
   syncTimer: null,
   syncDebounceTimer: null,
@@ -373,6 +377,7 @@ function loadCurrentProblem(problem) {
   resetGestureState();
   state.drawTool = 'pen';
   state.zoom = 1;
+  state.autoFitOnImageLoad = true;
   localStorage.setItem('psat-last-problem-id', problem.id);
 
   els.solvePanel.classList.remove('hidden');
@@ -388,6 +393,7 @@ function loadCurrentProblem(problem) {
   els.flagBtn.textContent = problem.flagged ? '다시보기 해제' : '다시보기 지정';
   setDrawTool('pen');
   setZoom(1);
+  enterSolveFullscreen();
   clearChoiceState();
   updateTimers();
   startTimer();
@@ -531,6 +537,7 @@ function finishSession(timeout) {
   clearInterval(state.timerId);
   state.timerId = null;
   state.current = null;
+  exitSolveFullscreen();
   els.solvePanel.classList.add('hidden');
   const card = document.createElement('section');
   card.className = 'card';
@@ -565,7 +572,7 @@ function setDrawTool(tool) {
 }
 
 function setZoom(value) {
-  state.zoom = Math.min(5, Math.max(0.75, Number(value)));
+  state.zoom = Math.min(5, Math.max(0.2, Number(value))); // v5: 한 화면 맞춤을 위해 20%까지 축소
   els.imageWrap.style.width = `${state.zoom * 100}%`;
   els.zoomLabel.textContent = `${Math.round(state.zoom * 100)}%`;
   window.requestAnimationFrame(syncCanvasSize);
@@ -587,6 +594,48 @@ function setZoomAround(value, clientX, clientY, fixedContentX = null, fixedConte
 function zoomFromCenter(delta) {
   const rect = els.imageScroller.getBoundingClientRect();
   setZoomAround(state.zoom + delta, rect.left + rect.width / 2, rect.top + rect.height / 2);
+}
+
+
+function fitZoomToScreen() {
+  if (!state.current || !els.problemImage.naturalWidth || !els.problemImage.naturalHeight) return;
+  const scroller = els.imageScroller;
+  if (!scroller.clientWidth || !scroller.clientHeight) return;
+  const baseWidth = scroller.clientWidth;
+  const baseHeight = baseWidth * (els.problemImage.naturalHeight / els.problemImage.naturalWidth);
+  const fitByHeight = (scroller.clientHeight - 12) / Math.max(1, baseHeight);
+  const fit = Math.min(1, Math.max(0.2, fitByHeight));
+  setZoom(fit);
+  scroller.scrollLeft = 0;
+  scroller.scrollTop = 0;
+}
+
+async function enterSolveFullscreen() {
+  if (!els.solvePanel) return;
+  document.body.classList.add('solve-active');
+  els.solvePanel.classList.add('fullscreen-solve');
+  state.solveFullscreenActive = true;
+  window.requestAnimationFrame(() => {
+    syncCanvasSize();
+    if (state.autoFitOnImageLoad) fitZoomToScreen();
+  });
+  try {
+    if (els.solvePanel.requestFullscreen && !document.fullscreenElement) {
+      await els.solvePanel.requestFullscreen();
+    }
+  } catch (err) {
+    // 모바일 브라우저가 전체화면 API를 막아도 CSS 전체화면은 유지합니다.
+  }
+}
+
+async function exitSolveFullscreen() {
+  document.body.classList.remove('solve-active');
+  els.solvePanel?.classList.remove('fullscreen-solve');
+  state.solveFullscreenActive = false;
+  window.requestAnimationFrame(syncCanvasSize);
+  try {
+    if (document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
+  } catch (err) {}
 }
 
 function getCanvasContext() {
@@ -1536,6 +1585,7 @@ async function wipeAll() {
   await clearStore(STORES.history);
   state.current = null;
   state.queue = [];
+  exitSolveFullscreen();
   els.solvePanel.classList.add('hidden');
   await refresh();
   showToast('전체 삭제 완료');
@@ -1584,11 +1634,22 @@ function bindEvents() {
   els.penBtn.addEventListener('click', () => setDrawTool('pen'));
   els.eraserBtn.addEventListener('click', () => setDrawTool('eraser'));
   els.clearInkBtn.addEventListener('click', clearInk);
+  if (els.exitSolveBtn) els.exitSolveBtn.addEventListener('click', async () => {
+    await saveInkToCurrentProblem(true);
+    await exitSolveFullscreen();
+  });
   els.penSize.addEventListener('input', updateSizeLabels);
   els.eraserSize.addEventListener('input', updateSizeLabels);
   els.zoomOutBtn.addEventListener('click', () => zoomFromCenter(-0.25));
   els.zoomInBtn.addEventListener('click', () => zoomFromCenter(0.25));
-  els.problemImage.addEventListener('load', () => window.requestAnimationFrame(syncCanvasSize));
+  if (els.fitZoomBtn) els.fitZoomBtn.addEventListener('click', fitZoomToScreen);
+  els.problemImage.addEventListener('load', () => window.requestAnimationFrame(() => {
+    syncCanvasSize();
+    if (state.autoFitOnImageLoad) {
+      fitZoomToScreen();
+      state.autoFitOnImageLoad = false;
+    }
+  }));
   window.addEventListener('resize', () => window.requestAnimationFrame(syncCanvasSize));
   els.inkCanvas.addEventListener('pointerdown', startInk);
   els.inkCanvas.addEventListener('pointermove', moveInk);

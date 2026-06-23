@@ -13,7 +13,7 @@
   <header class="app-header">
     <div>
       <h1>PSAT 랜덤 오답노트</h1>
-      <p>이미지 문제 · 정답체크 · 해설 · 랜덤 · 오답 · 시간 · 손 이동/확대 · 스타일러스 필기</p>
+      <p>이미지 문제 · 정답체크 · 해설 · 랜덤 · 오답 · 전체화면 풀이 · 스타일러스 필기</p>
     </div>
     <button id="installBtn" class="ghost hidden" type="button">홈화면 설치</button>
   </header>
@@ -72,6 +72,7 @@
             <span>현재 문제</span>
             <strong id="questionTimer">00:00</strong>
             <span id="sessionTimer" class="session-timer hidden">세션 00:00</span>
+            <button id="exitSolveBtn" class="mini-exit" type="button">나가기</button>
           </div>
         </div>
 
@@ -90,6 +91,7 @@
           <button id="zoomOutBtn" class="secondary" type="button">−</button>
           <span id="zoomLabel" class="badge">100%</span>
           <button id="zoomInBtn" class="secondary" type="button">＋</button>
+          <button id="fitZoomBtn" class="secondary" type="button">맞춤</button>
           <span class="tool-help">손가락: 이동/확대 · 스타일러스/마우스: 필기</span>
         </div>
 
