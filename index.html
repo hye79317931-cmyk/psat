@@ -7,7 +7,7 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="assets/icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=6" />
+  <link rel="stylesheet" href="styles.css?v=8" />
 </head>
 <body>
   <header class="app-header">
@@ -77,6 +77,11 @@
         </div>
 
         <div class="toolbar note-toolbar">
+          <div class="left-timer-box" aria-label="풀이 시간">
+            <span class="left-timer-label">현재</span>
+            <strong id="leftQuestionTimer">00:00</strong>
+            <span id="leftSessionTimer" class="left-session-timer hidden">세션 00:00</span>
+          </div>
           <button id="penBtn" class="secondary active-tool" type="button">펜</button>
           <button id="eraserBtn" class="secondary" type="button">지우개</button>
           <label class="compact range-control">펜 크기
@@ -242,6 +247,6 @@
   </main>
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>

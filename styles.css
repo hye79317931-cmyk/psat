@@ -932,3 +932,98 @@ body.solve-active {
   #solvePanel.fullscreen-solve .choice { min-height: 27px; }
   #solvePanel.fullscreen-solve > .row.wrap button { min-height: 26px; }
 }
+
+
+/* v7: 전체화면 왼쪽 도구 영역에 실제 시간 박스 고정 표시 */
+.left-timer-box {
+  display: none;
+}
+
+#solvePanel.fullscreen-solve .timer-box {
+  display: none !important;
+}
+
+#solvePanel.fullscreen-solve .note-toolbar {
+  padding-top: max(5px, env(safe-area-inset-top)) !important;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+#solvePanel.fullscreen-solve .left-timer-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 60px;
+  padding: 5px 2px;
+  margin: 0 0 2px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, .98);
+  border: 1px solid rgba(255,255,255,.16);
+  box-shadow: 0 8px 20px rgba(0,0,0,.24);
+  color: #f8fafc;
+  text-align: center;
+  position: sticky;
+  top: max(5px, env(safe-area-inset-top));
+  z-index: 6;
+}
+
+#solvePanel.fullscreen-solve .left-timer-label {
+  display: block;
+  font-size: 9px;
+  line-height: 1.05;
+  color: rgba(226,232,240,.78);
+  font-weight: 800;
+}
+
+#solvePanel.fullscreen-solve .left-timer-box strong {
+  display: block;
+  font-size: 15px;
+  line-height: 1.05;
+  letter-spacing: -.04em;
+  margin-top: 2px;
+}
+
+#solvePanel.fullscreen-solve .left-session-timer {
+  display: block;
+  margin-top: 2px;
+  font-size: 8px;
+  line-height: 1.08;
+  color: rgba(226,232,240,.82);
+  word-break: keep-all;
+}
+
+#solvePanel.fullscreen-solve .left-session-timer.hidden {
+  display: none !important;
+}
+
+@media (max-width: 520px) {
+  #solvePanel.fullscreen-solve .note-toolbar {
+    padding-top: max(4px, env(safe-area-inset-top)) !important;
+  }
+  #solvePanel.fullscreen-solve .left-timer-box {
+    min-height: 56px;
+    padding: 4px 2px;
+  }
+  #solvePanel.fullscreen-solve .left-timer-box strong {
+    font-size: 14px;
+  }
+  #solvePanel.fullscreen-solve .left-timer-label,
+  #solvePanel.fullscreen-solve .left-session-timer {
+    font-size: 8px;
+  }
+}
+
+@media (max-height: 640px) {
+  #solvePanel.fullscreen-solve .note-toolbar {
+    padding-top: max(3px, env(safe-area-inset-top)) !important;
+  }
+  #solvePanel.fullscreen-solve .left-timer-box {
+    min-height: 48px;
+    padding: 3px 2px;
+  }
+  #solvePanel.fullscreen-solve .left-timer-box strong {
+    font-size: 13px;
+  }
+}

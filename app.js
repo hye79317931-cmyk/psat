@@ -5,6 +5,9 @@ const DB_VERSION = 1;
 const STORES = { problems: 'problems', history: 'history' };
 const SLOW_MS = 180000;
 const WRONG_CLEAR_STREAK = 2;
+const SYNC_CONFIG_KEY = 'psat-sync-config';
+const SYNC_TOMBSTONES_KEY = 'psat-sync-tombstones';
+const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
 const $ = (id) => document.getElementById(id);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -27,6 +30,8 @@ const els = {
   problemMeta: $('problemMeta'),
   questionTimer: $('questionTimer'),
   sessionTimer: $('sessionTimer'),
+  leftQuestionTimer: $('leftQuestionTimer'),
+  leftSessionTimer: $('leftSessionTimer'),
   imageScroller: $('imageScroller'),
   imageWrap: $('imageWrap'),
   problemImage: $('problemImage'),
@@ -192,23 +197,14 @@ async function put(storeName, value) {
 }
 
 async function remove(storeName, id) {
-  if (storeName === STORES.problems) recordTombstone(id);
+  // v8: 동기화 기능을 제거했기 때문에 tombstone 기록 없이 즉시 삭제합니다.
   const result = await tx(storeName, 'readwrite', (store) => store.delete(id));
-  scheduleSyncForLocalChange(storeName);
   return result;
 }
 
 async function clearStore(storeName) {
-  if (storeName === STORES.problems) {
-    try {
-      const existing = await getAll(STORES.problems);
-      existing.forEach((p) => recordTombstone(p.id));
-    } catch (err) {
-      console.warn('tombstone record failed', err);
-    }
-  }
+  // v8: 동기화 기능을 제거했기 때문에 tombstone 기록 없이 즉시 초기화합니다.
   const result = await tx(storeName, 'readwrite', (store) => store.clear());
-  scheduleSyncForLocalChange(storeName);
   return result;
 }
 
@@ -402,12 +398,18 @@ function startTimer() {
 
 function updateTimers() {
   if (!state.current || !state.questionStart) return;
-  els.questionTimer.textContent = formatTime(Date.now() - state.questionStart);
+  const questionText = formatTime(Date.now() - state.questionStart);
+  if (els.questionTimer) els.questionTimer.textContent = questionText;
+  if (els.leftQuestionTimer) els.leftQuestionTimer.textContent = questionText;
+
   const hasSessionTimer = state.session && state.session.endAt;
-  els.sessionTimer.classList.toggle('hidden', !hasSessionTimer);
+  if (els.sessionTimer) els.sessionTimer.classList.toggle('hidden', !hasSessionTimer);
+  if (els.leftSessionTimer) els.leftSessionTimer.classList.toggle('hidden', !hasSessionTimer);
   if (hasSessionTimer) {
     const remain = state.session.endAt - Date.now();
-    els.sessionTimer.textContent = `세션 ${formatTime(remain)}`;
+    const sessionText = `세션 ${formatTime(remain)}`;
+    if (els.sessionTimer) els.sessionTimer.textContent = sessionText;
+    if (els.leftSessionTimer) els.leftSessionTimer.textContent = sessionText;
     if (remain <= 0 && !state.checked) finishSession(true);
   }
 }
@@ -950,6 +952,40 @@ function problemItem(p, wrongOnly) {
   return div;
 }
 
+async function deleteProblemById(id) {
+  const target = state.problems.find((item) => item.id === id);
+  if (!target) {
+    showToast('이미 삭제된 문제야');
+    return;
+  }
+  try {
+    await remove(STORES.problems, id);
+
+    // 이 문제의 풀이 기록도 같이 삭제해서 통계/백업에 남지 않게 처리합니다.
+    const histories = await getAll(STORES.history);
+    for (const h of histories) {
+      if (h.problemId === id) await remove(STORES.history, h.id);
+    }
+
+    if (state.current && state.current.id === id) {
+      await saveInkToCurrentProblem(false).catch(() => {});
+      state.current = null;
+      state.selectedAnswer = null;
+      state.checked = false;
+      els.solvePanel.classList.add('hidden');
+      exitSolveFullscreen();
+    }
+    state.queue = state.queue.filter((item) => item.id !== id);
+    localStorage.removeItem('psat-last-problem-id');
+
+    await refresh();
+    showToast('문제를 삭제했어');
+  } catch (err) {
+    console.error(err);
+    showToast('삭제 중 오류가 났어. 앱을 새로고침한 뒤 다시 시도해줘.');
+  }
+}
+
 async function handleItemClick(event) {
   const btn = event.target.closest('button[data-action]');
   if (!btn) return;
@@ -974,9 +1010,7 @@ async function handleItemClick(event) {
   }
   if (action === 'delete') {
     if (!confirm('이 문제를 삭제할까? 복구하려면 백업 파일이 필요해.')) return;
-    await remove(STORES.problems, id);
-    await refresh();
-    showToast('삭제했어');
+    await deleteProblemById(id);
   }
 }
 
@@ -1271,7 +1305,8 @@ function saveSyncConfig(cfg) {
 
 function clearSyncConfig() {
   state.syncConfig = null;
-  localStorage.removeItem(SYNC_CONFIG_KEY);
+  localStorage.removeItem('psat-sync-config');
+  localStorage.removeItem('psat-sync-tombstones');
 }
 
 function renderSyncSettings() {
@@ -1714,7 +1749,8 @@ async function init() {
   resetForm();
   updateSizeLabels();
   setDrawEnabled(true);
-  localStorage.removeItem(SYNC_CONFIG_KEY);
+  localStorage.removeItem('psat-sync-config');
+  localStorage.removeItem('psat-sync-tombstones');
   await openDb();
   await refresh();
   await registerServiceWorker();
