@@ -7,13 +7,13 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="assets/icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=8" />
+  <link rel="stylesheet" href="styles.css?v=11" />
 </head>
 <body>
   <header class="app-header">
     <div>
       <h1>PSAT 랜덤 오답노트</h1>
-      <p>이미지 문제 · 정답체크 · 해설 · 랜덤 · 오답 · 전체화면 풀이 · 왼쪽 필기 도구 · 스타일러스 필기</p>
+      <p>PSAT 언어·자료·상황 · 연도별 분류 · 랜덤 세트 · 자동 다음문제 · 오답/전체 다시보기</p>
     </div>
     <button id="installBtn" class="ghost hidden" type="button">홈화면 설치</button>
   </header>
@@ -30,6 +30,15 @@
     <section id="solveView" class="view active">
       <section class="card">
         <h2>랜덤 출제 설정</h2>
+        <div class="quick-panel" aria-label="빠른 랜덤 풀이">
+          <div class="quick-title">언어 랜덤 바로 풀기</div>
+          <div class="quick-buttons">
+            <button class="quick-start" data-subject="언어" data-count="10" type="button">언어 10문제</button>
+            <button class="quick-start" data-subject="언어" data-count="20" type="button">언어 20문제</button>
+            <button class="quick-start" data-subject="언어" data-count="30" type="button">언어 30문제</button>
+            <button class="quick-start" data-subject="언어" data-count="40" type="button">언어 40문제</button>
+          </div>
+        </div>
         <div class="grid two">
           <label>출제 범위
             <select id="modeSelect">
@@ -40,8 +49,11 @@
               <option value="flagged">다시보기 지정</option>
             </select>
           </label>
-          <label>과목
+          <label>대분류
             <select id="subjectFilter"><option value="">전체</option></select>
+          </label>
+          <label>연도
+            <select id="yearFilter"><option value="">전체</option></select>
           </label>
           <label>세션 문제 수
             <input id="sessionCount" type="number" min="1" step="1" placeholder="비우면 전체" />
@@ -62,6 +74,8 @@
         <p>문제등록에서 PSAT 문제 사진을 올리고 정답·해설을 입력하면 바로 랜덤으로 풀 수 있어.</p>
       </section>
 
+      <section id="sessionSummary" class="card session-summary hidden" aria-live="polite"></section>
+
       <section id="solvePanel" class="card hidden">
         <div class="solve-top">
           <div>
@@ -72,7 +86,6 @@
             <span>현재 문제</span>
             <strong id="questionTimer">00:00</strong>
             <span id="sessionTimer" class="session-timer hidden">세션 00:00</span>
-            <button id="exitSolveBtn" class="mini-exit" type="button">나가기</button>
           </div>
         </div>
 
@@ -82,6 +95,7 @@
             <strong id="leftQuestionTimer">00:00</strong>
             <span id="leftSessionTimer" class="left-session-timer hidden">세션 00:00</span>
           </div>
+          <button id="exitSolveBtn" class="secondary mini-exit" type="button">나가기</button>
           <button id="penBtn" class="secondary active-tool" type="button">펜</button>
           <button id="eraserBtn" class="secondary" type="button">지우개</button>
           <label class="compact range-control">펜 크기
@@ -133,11 +147,18 @@
         <form id="problemForm">
           <input id="editingId" type="hidden" />
           <div class="grid two">
-            <label>과목
-              <input id="subjectInput" type="text" value="언어논리" placeholder="예: 언어논리, 자료해석, 상황판단" required />
+            <label>대분류
+              <select id="subjectInput" required>
+                <option value="언어">언어</option>
+                <option value="자료">자료</option>
+                <option value="상황">상황</option>
+              </select>
             </label>
-            <label>분류
-              <input id="categoryInput" type="text" placeholder="예: 추론, 내용일치, 논증" />
+            <label>연도
+              <input id="yearInput" type="number" min="1990" max="2099" step="1" placeholder="예: 2025" />
+            </label>
+            <label>세분류
+              <input id="categoryInput" type="text" placeholder="예: 추론, 내용일치, 논증, 계산, 법률형" />
             </label>
             <label>정답
               <select id="answerInput" required>
@@ -169,6 +190,14 @@
             <button id="clearProblemImageBtn" class="secondary" type="button">문제 이미지 비우기</button>
           </div>
           <p class="hint">PC에서는 캡처 후 Ctrl+V가 제일 빠릅니다. 모바일은 브라우저 제한 때문에 파일 선택 방식이 더 안정적입니다.</p>
+          <label>이미지 저장 방식
+            <select id="imageQualityInput">
+              <option value="sharp" selected>선명 압축 / 권장</option>
+              <option value="bulk">3000문제용 압축 / 용량 작게</option>
+              <option value="original">원본 그대로 / 용량 큼</option>
+            </select>
+          </label>
+          <p class="hint">문제가 3000개 이상이면 저장공간 때문에 “3000문제용 압축”이 가장 안정적입니다. 글자가 흐리면 “선명 압축”을 쓰면 됩니다.</p>
           <img id="previewImage" class="preview hidden" alt="문제 이미지 미리보기" />
 
           <div class="paste-card" id="explanationPasteZone" data-paste-target="explanation" tabindex="0" role="button" aria-label="해설 스크린샷 붙여넣기 영역">
@@ -214,10 +243,13 @@
         <h2>문제 목록</h2>
         <div class="grid two">
           <label>검색
-            <input id="searchInput" type="search" placeholder="과목, 분류, 태그, 해설 검색" />
+            <input id="searchInput" type="search" placeholder="대분류, 연도, 세분류, 태그, 해설 검색" />
           </label>
-          <label>과목 필터
+          <label>대분류 필터
             <select id="listSubjectFilter"><option value="">전체</option></select>
+          </label>
+          <label>연도 필터
+            <select id="listYearFilter"><option value="">전체</option></select>
           </label>
         </div>
         <div id="problemList" class="list"></div>
@@ -247,6 +279,6 @@
   </main>
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-  <script src="app.js?v=8"></script>
+  <script src="app.js?v=11"></script>
 </body>
 </html>

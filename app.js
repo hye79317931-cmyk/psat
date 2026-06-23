@@ -8,6 +8,7 @@ const WRONG_CLEAR_STREAK = 2;
 const SYNC_CONFIG_KEY = 'psat-sync-config';
 const SYNC_TOMBSTONES_KEY = 'psat-sync-tombstones';
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const SUBJECT_GROUPS = ['언어', '자료', '상황'];
 
 const $ = (id) => document.getElementById(id);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -20,12 +21,15 @@ const els = {
 
   modeSelect: $('modeSelect'),
   subjectFilter: $('subjectFilter'),
+  yearFilter: $('yearFilter'),
+  quickStartBtns: $$('.quick-start'),
   sessionCount: $('sessionCount'),
   sessionMinutes: $('sessionMinutes'),
   startBtn: $('startBtn'),
   continueBtn: $('continueBtn'),
   emptySolve: $('emptySolve'),
   solvePanel: $('solvePanel'),
+  sessionSummary: $('sessionSummary'),
   problemTitle: $('problemTitle'),
   problemMeta: $('problemMeta'),
   questionTimer: $('questionTimer'),
@@ -61,6 +65,7 @@ const els = {
   editingId: $('editingId'),
   subjectInput: $('subjectInput'),
   categoryInput: $('categoryInput'),
+  yearInput: $('yearInput'),
   answerInput: $('answerInput'),
   difficultyInput: $('difficultyInput'),
   imageInput: $('imageInput'),
@@ -73,6 +78,7 @@ const els = {
   explanationPasteZone: $('explanationPasteZone'),
   pasteExplanationBtn: $('pasteExplanationBtn'),
   clearExplanationImageBtn: $('clearExplanationImageBtn'),
+  imageQualityInput: $('imageQualityInput'),
   explanationInput: $('explanationInput'),
   tagsInput: $('tagsInput'),
   resetFormBtn: $('resetFormBtn'),
@@ -82,6 +88,7 @@ const els = {
   wrongList: $('wrongList'),
   searchInput: $('searchInput'),
   listSubjectFilter: $('listSubjectFilter'),
+  listYearFilter: $('listYearFilter'),
   problemList: $('problemList'),
   statsCards: $('statsCards'),
   exportBtn: $('exportBtn'),
@@ -108,6 +115,8 @@ const state = {
   queue: [],
   queueIndex: 0,
   session: null,
+  lastSession: null,
+  autoNextTimer: null,
   questionStart: 0,
   timerId: null,
   drawTool: 'pen',
@@ -124,6 +133,7 @@ const state = {
   formExplanationImageData: '',
   autoFitOnImageLoad: false,
   solveFullscreenActive: false,
+  saveBusy: false,
   syncConfig: null,
   syncTimer: null,
   syncDebounceTimer: null,
@@ -273,8 +283,50 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+function canonicalSubject(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '미분류';
+  if (raw.includes('언어')) return '언어';
+  if (raw.includes('자료')) return '자료';
+  if (raw.includes('상황')) return '상황';
+  return raw;
+}
+
+function subjectMatches(problem, filter) {
+  if (!filter) return true;
+  return canonicalSubject(problem.subject) === filter || String(problem.subject || '').includes(filter);
+}
+
+function normalizedYear(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const match = text.match(/\d{4}/);
+  return match ? match[0] : text;
+}
+
+function getYearSet() {
+  return [...new Set(state.problems.map((p) => normalizedYear(p.year)).filter(Boolean))]
+    .sort((a, b) => Number(b) - Number(a));
+}
+
+function fillYearSelect(select, keepValue = true) {
+  if (!select) return;
+  const current = keepValue ? select.value : '';
+  select.innerHTML = '<option value="">전체</option>';
+  for (const year of getYearSet()) {
+    const opt = document.createElement('option');
+    opt.value = year;
+    opt.textContent = `${year}년`;
+    select.appendChild(opt);
+  }
+  if (current && [...select.options].some((o) => o.value === current)) select.value = current;
+}
+
 function getSubjectSet() {
-  return [...new Set(state.problems.map((p) => p.subject || '미분류'))].sort((a, b) => a.localeCompare(b, 'ko'));
+  const found = new Set(state.problems.map((p) => canonicalSubject(p.subject || '미분류')));
+  const ordered = SUBJECT_GROUPS.filter((subject) => found.has(subject) || ['언어', '자료', '상황'].includes(subject));
+  const extra = [...found].filter((subject) => !SUBJECT_GROUPS.includes(subject)).sort((a, b) => a.localeCompare(b, 'ko'));
+  return [...ordered, ...extra];
 }
 
 function fillSubjectSelect(select, keepValue = true) {
@@ -286,7 +338,7 @@ function fillSubjectSelect(select, keepValue = true) {
     opt.textContent = subject;
     select.appendChild(opt);
   }
-  if ([...select.options].some((o) => o.value === current)) select.value = current;
+  if (current && [...select.options].some((o) => o.value === current)) select.value = current;
 }
 
 async function refresh() {
@@ -294,6 +346,8 @@ async function refresh() {
   state.problems.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   fillSubjectSelect(els.subjectFilter);
   fillSubjectSelect(els.listSubjectFilter);
+  fillYearSelect(els.yearFilter);
+  fillYearSelect(els.listYearFilter);
   renderEmptyState();
   renderProblemList();
   renderWrongList();
@@ -313,9 +367,11 @@ function switchView(viewId) {
   if (viewId === 'statsView') renderStats();
 }
 
-function filterProblems(mode, subject) {
+function filterProblems(mode, subject, year = '') {
+  const targetYear = normalizedYear(year);
   return state.problems.filter((p) => {
-    if (subject && (p.subject || '미분류') !== subject) return false;
+    if (subject && !subjectMatches(p, subject)) return false;
+    if (targetYear && normalizedYear(p.year) !== targetYear) return false;
     if (mode === 'wrong') return !!p.wrongActive;
     if (mode === 'slow') return averageTime(p) >= SLOW_MS || (p.lastTimeMs || 0) >= SLOW_MS;
     if (mode === 'unseen') return !p.attempts;
@@ -329,32 +385,47 @@ function startSession(problems, options = {}) {
     showToast('해당 조건의 문제가 없어');
     return;
   }
+  clearTimeout(state.autoNextTimer);
+  state.autoNextTimer = null;
+  if (els.sessionSummary) els.sessionSummary.classList.add('hidden');
   const count = Number(options.count || 0);
-  state.queue = shuffle(problems).slice(0, count > 0 ? count : problems.length);
+  const source = options.preserveOrder ? [...problems] : shuffle(problems);
+  state.queue = source.slice(0, count > 0 ? Math.min(count, source.length) : source.length);
   state.queueIndex = 0;
   const minutes = Number(options.minutes || 0);
   state.session = {
+    label: options.label || '랜덤 풀이',
     startedAt: Date.now(),
     endAt: minutes > 0 ? Date.now() + minutes * 60 * 1000 : 0,
     total: state.queue.length,
     answered: 0,
     correct: 0,
-    elapsedOnFinish: 0
+    elapsedOnFinish: 0,
+    problemIds: state.queue.map((p) => p.id),
+    answeredIds: [],
+    wrongIds: []
   };
   loadCurrentProblem(state.queue[0]);
   switchView('solveView');
 }
 
 function startDirectProblem(problem) {
+  clearTimeout(state.autoNextTimer);
+  state.autoNextTimer = null;
+  if (els.sessionSummary) els.sessionSummary.classList.add('hidden');
   state.queue = [problem];
   state.queueIndex = 0;
   state.session = {
+    label: '단일 문제',
     startedAt: Date.now(),
     endAt: 0,
     total: 1,
     answered: 0,
     correct: 0,
-    elapsedOnFinish: 0
+    elapsedOnFinish: 0,
+    problemIds: [problem.id],
+    answeredIds: [],
+    wrongIds: []
   };
   loadCurrentProblem(problem);
   switchView('solveView');
@@ -380,7 +451,8 @@ function loadCurrentProblem(problem) {
   els.problemTitle.textContent = `문제 ${state.queueIndex + 1}/${state.queue.length}`;
   const avg = averageTime(problem) ? `평균 ${formatLongTime(averageTime(problem))}` : '기록 없음';
   const tags = (problem.tags || []).length ? ` · #${problem.tags.join(' #')}` : '';
-  els.problemMeta.textContent = `${problem.subject || '미분류'} · ${problem.category || '분류없음'} · 난이도 ${problem.difficulty || '중'} · 정답률 ${accuracy(problem)}% · ${avg}${tags}`;
+  const yearText = normalizedYear(problem.year) ? ` · ${normalizedYear(problem.year)}년` : '';
+  els.problemMeta.textContent = `${canonicalSubject(problem.subject)}${yearText} · ${problem.category || '분류없음'} · 난이도 ${problem.difficulty || '중'} · 정답률 ${accuracy(problem)}% · ${avg}${tags}`;
   els.problemImage.src = problem.imageData;
   els.flagBtn.textContent = problem.flagged ? '다시보기 해제' : '다시보기 지정';
   setDrawTool('pen');
@@ -430,9 +502,10 @@ function markChoiceButtons(correctAnswer, selectedAnswer) {
   });
 }
 
-async function checkAnswer() {
+async function checkAnswer(options = {}) {
   if (!state.current) return;
   if (state.checked) {
+    if (options.autoAdvance) return;
     showToast('이미 채점한 문제야');
     return;
   }
@@ -477,7 +550,9 @@ async function checkAnswer() {
   state.checked = true;
   if (state.session) {
     state.session.answered += 1;
+    if (!state.session.answeredIds.includes(p.id)) state.session.answeredIds.push(p.id);
     if (isCorrect) state.session.correct += 1;
+    if (!isCorrect && !state.session.wrongIds.includes(p.id)) state.session.wrongIds.push(p.id);
   }
 
   markChoiceButtons(p.answer, state.selectedAnswer);
@@ -487,8 +562,17 @@ async function checkAnswer() {
     : '';
   els.resultBox.innerHTML = `${isCorrect ? '정답입니다.' : '오답입니다.'}<br>선택: ${choiceLabel(state.selectedAnswer)} / 정답: ${choiceLabel(p.answer)}<br>풀이시간: ${formatLongTime(elapsed)}${clearText}`;
   els.resultBox.classList.remove('hidden');
-  showExplanation();
+  if (options.autoAdvance) {
+    els.explanationBox.classList.add('hidden');
+  } else {
+    showExplanation();
+  }
   await refresh();
+  if (options.autoAdvance) {
+    clearTimeout(state.autoNextTimer);
+    const isLast = !state.session || state.queueIndex + 1 >= state.queue.length;
+    state.autoNextTimer = setTimeout(() => nextProblem(), isLast ? 450 : 650);
+  }
 }
 
 function showExplanation() {
@@ -517,6 +601,8 @@ function showExplanation() {
 }
 
 async function nextProblem() {
+  clearTimeout(state.autoNextTimer);
+  state.autoNextTimer = null;
   if (!state.current) return;
   await saveInkToCurrentProblem(true);
   if (state.queueIndex + 1 >= state.queue.length) {
@@ -530,26 +616,101 @@ async function nextProblem() {
 
 function finishSession(timeout) {
   if (!state.session) return;
-  const elapsed = Date.now() - state.session.startedAt;
-  state.session.elapsedOnFinish = elapsed;
+  const session = state.session;
+  const elapsed = Date.now() - session.startedAt;
+  session.elapsedOnFinish = elapsed;
+  clearTimeout(state.autoNextTimer);
+  state.autoNextTimer = null;
   clearInterval(state.timerId);
   state.timerId = null;
   state.current = null;
   exitSolveFullscreen();
   els.solvePanel.classList.add('hidden');
-  const card = document.createElement('section');
-  card.className = 'card';
-  card.innerHTML = `
-    <h2>${timeout ? '시간 종료' : '세션 완료'}</h2>
-    <p>풀이: ${state.session.answered}/${state.session.total}</p>
-    <p>정답: ${state.session.correct}개</p>
-    <p>정답률: ${state.session.answered ? Math.round(state.session.correct / state.session.answered * 100) : 0}%</p>
-    <p>걸린 시간: ${formatLongTime(elapsed)}</p>
-  `;
-  els.solveView.appendChild(card);
-  setTimeout(() => card.remove(), 9000);
+  state.lastSession = {
+    label: session.label || '랜덤 풀이',
+    timeout: !!timeout,
+    total: session.total,
+    answered: session.answered,
+    correct: session.correct,
+    elapsed,
+    problemIds: [...(session.problemIds || [])],
+    wrongIds: [...(session.wrongIds || [])]
+  };
   state.session = null;
+  renderSessionSummary();
   showToast(timeout ? '제한시간이 끝났어' : '세션 완료');
+}
+
+function renderSessionSummary(showWrongList = false) {
+  if (!els.sessionSummary || !state.lastSession) return;
+  const s = state.lastSession;
+  const wrongCount = s.wrongIds.length;
+  const rate = s.answered ? Math.round(s.correct / s.answered * 100) : 0;
+  const wrongListHtml = showWrongList
+    ? `<div class="summary-wrong-list">${renderSummaryWrongItems(s.wrongIds)}</div>`
+    : '';
+  els.sessionSummary.innerHTML = `
+    <h2>${s.timeout ? '시간 종료' : '세트 완료'} · ${escapeHtml(s.label || '')}</h2>
+    <div class="summary-stats">
+      <div><span>풀이</span><strong>${s.answered}/${s.total}</strong></div>
+      <div><span>정답</span><strong>${s.correct}</strong></div>
+      <div><span>오답</span><strong>${wrongCount}</strong></div>
+      <div><span>정답률</span><strong>${rate}%</strong></div>
+      <div><span>시간</span><strong>${formatLongTime(s.elapsed)}</strong></div>
+    </div>
+    <div class="summary-actions">
+      <button data-summary-action="wrong-review" ${wrongCount ? '' : 'disabled'} type="button">틀린문제 다시풀기</button>
+      <button data-summary-action="wrong-list" ${wrongCount ? '' : 'disabled'} class="secondary" type="button">틀린문제 보기</button>
+      <button data-summary-action="all-review" class="secondary" type="button">전체 다시풀기</button>
+      <button data-summary-action="new-random" class="secondary" type="button">새 랜덤</button>
+    </div>
+    ${wrongListHtml}
+  `;
+  els.sessionSummary.classList.remove('hidden');
+}
+
+function renderSummaryWrongItems(ids) {
+  const items = ids.map((id) => state.problems.find((p) => p.id === id)).filter(Boolean);
+  if (!items.length) return '<p class="hint">틀린 문제가 없어.</p>';
+  return items.map((p, idx) => `
+    <article class="summary-wrong-item">
+      <img src="${p.imageData}" alt="틀린 문제 ${idx + 1}">
+      <div>
+        <strong>${idx + 1}. ${escapeHtml(canonicalSubject(p.subject))}${normalizedYear(p.year) ? ` · ${escapeHtml(normalizedYear(p.year))}년` : ''} · ${escapeHtml(p.category || '분류없음')}</strong>
+        <span>정답 ${choiceLabel(p.answer)} · 최근 풀이 ${formatLongTime(p.lastTimeMs || 0)}</span>
+        <button data-action="solve" data-id="${p.id}" type="button">이 문제 풀기</button>
+      </div>
+    </article>
+  `).join('');
+}
+
+function startReviewByIds(ids, label) {
+  const list = ids.map((id) => state.problems.find((p) => p.id === id)).filter(Boolean);
+  if (!list.length) {
+    showToast('다시 풀 문제가 없어');
+    return;
+  }
+  startSession(list, { preserveOrder: true, label });
+}
+
+function handleSessionSummaryClick(event) {
+  const actionBtn = event.target.closest('[data-summary-action]');
+  if (actionBtn) {
+    const action = actionBtn.dataset.summaryAction;
+    if (action === 'wrong-review') startReviewByIds(state.lastSession?.wrongIds || [], '틀린문제 다시풀기');
+    if (action === 'wrong-list') renderSessionSummary(true);
+    if (action === 'all-review') startReviewByIds(state.lastSession?.problemIds || [], '전체 다시풀기');
+    if (action === 'new-random') {
+      els.sessionSummary.classList.add('hidden');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    return;
+  }
+  const solveBtn = event.target.closest('button[data-action="solve"]');
+  if (solveBtn) {
+    const p = state.problems.find((item) => item.id === solveBtn.dataset.id);
+    if (p) startDirectProblem(p);
+  }
 }
 
 function setDrawEnabled(enabled) {
@@ -896,11 +1057,13 @@ async function toggleFlag() {
 function renderProblemList() {
   const query = els.searchInput.value.trim().toLowerCase();
   const subject = els.listSubjectFilter.value;
+  const year = els.listYearFilter?.value || '';
   const list = state.problems.filter((p) => {
-    if (subject && (p.subject || '미분류') !== subject) return false;
+    if (subject && !subjectMatches(p, subject)) return false;
+    if (year && normalizedYear(p.year) !== year) return false;
     if (!query) return true;
     const imageKeyword = p.explanationImageData ? '해설이미지 스크린샷' : '';
-    const hay = [p.subject, p.category, p.difficulty, p.explanation, imageKeyword, ...(p.tags || [])].join(' ').toLowerCase();
+    const hay = [canonicalSubject(p.subject), p.subject, p.year, p.category, p.difficulty, p.explanation, imageKeyword, ...(p.tags || [])].join(' ').toLowerCase();
     return hay.includes(query);
   });
   els.problemList.innerHTML = '';
@@ -935,7 +1098,7 @@ function problemItem(p, wrongOnly) {
   div.innerHTML = `
     <img src="${p.imageData}" alt="문제 썸네일">
     <div>
-      <h3>${escapeHtml(p.subject || '미분류')} · ${escapeHtml(p.category || '분류없음')} · 정답 ${choiceLabel(p.answer)}</h3>
+      <h3>${escapeHtml(canonicalSubject(p.subject))}${normalizedYear(p.year) ? ` · ${escapeHtml(normalizedYear(p.year))}년` : ''} · ${escapeHtml(p.category || '분류없음')} · 정답 ${choiceLabel(p.answer)}</h3>
       <p>난이도 ${escapeHtml(p.difficulty || '중')} · 풀이 ${p.attempts || 0}회 · 정답률 ${accuracy(p)}% · 평균 ${formatLongTime(averageTime(p))}</p>
       <p>${escapeHtml(streak)}${p.flagged ? ' · 다시보기 지정' : ''}${hasExpImage}</p>
       <p>${tags}</p>
@@ -1073,8 +1236,9 @@ function clearFormImage(target) {
 function resetForm() {
   els.problemForm.reset();
   els.editingId.value = '';
-  els.subjectInput.value = '언어논리';
+  els.subjectInput.value = '언어';
   els.difficultyInput.value = '중';
+  if (els.yearInput) els.yearInput.value = '';
   els.formTitle.textContent = '문제 등록';
   clearFormImage('problem');
   clearFormImage('explanation');
@@ -1085,7 +1249,8 @@ function resetForm() {
 function editProblem(p) {
   els.formTitle.textContent = '문제 수정';
   els.editingId.value = p.id;
-  els.subjectInput.value = p.subject || '언어논리';
+  els.subjectInput.value = SUBJECT_GROUPS.includes(canonicalSubject(p.subject)) ? canonicalSubject(p.subject) : '언어';
+  if (els.yearInput) els.yearInput.value = normalizedYear(p.year);
   els.categoryInput.value = p.category || '';
   els.answerInput.value = String(p.answer || 1);
   els.difficultyInput.value = p.difficulty || '중';
@@ -1110,17 +1275,98 @@ async function blobToDataUrl(blob) {
   });
 }
 
+function dataUrlBytes(dataUrl) {
+  const comma = String(dataUrl || '').indexOf(',');
+  const payload = comma >= 0 ? String(dataUrl).slice(comma + 1) : String(dataUrl || '');
+  return Math.floor(payload.length * 3 / 4);
+}
+
+function formatBytes(bytes) {
+  const n = Number(bytes || 0);
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)}KB`;
+  return `${(n / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function compressionPreset() {
+  const mode = els.imageQualityInput?.value || 'sharp';
+  if (mode === 'original') return { mode, label: '원본', maxWidth: Infinity, quality: 1, mime: '' };
+  if (mode === 'bulk') return { mode, label: '3000문제용', maxWidth: 1700, quality: 0.86, mime: 'image/webp' };
+  return { mode: 'sharp', label: '선명압축', maxWidth: 2200, quality: 0.94, mime: 'image/webp' };
+}
+
+function blobToImage(blob) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('이미지를 읽지 못했어'));
+    };
+    img.src = url;
+  });
+}
+
+function canvasToBlob(canvas, mime, quality) {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), mime, quality);
+  });
+}
+
+async function imageBlobToDataUrl(blob) {
+  const preset = compressionPreset();
+  if (preset.mode === 'original') return blobToDataUrl(blob);
+
+  try {
+    const img = await blobToImage(blob);
+    const originalWidth = img.naturalWidth || img.width;
+    const originalHeight = img.naturalHeight || img.height;
+    if (!originalWidth || !originalHeight) return blobToDataUrl(blob);
+
+    const scale = Math.min(1, preset.maxWidth / originalWidth);
+    const width = Math.max(1, Math.round(originalWidth * scale));
+    const height = Math.max(1, Math.round(originalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { alpha: false });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+
+    let out = await canvasToBlob(canvas, preset.mime, preset.quality);
+    // 일부 브라우저에서 WebP 변환이 실패하면 JPEG로 저장합니다.
+    if (!out) out = await canvasToBlob(canvas, 'image/jpeg', 0.92);
+    if (!out) return blobToDataUrl(blob);
+    return blobToDataUrl(out);
+  } catch (err) {
+    console.warn('Image optimization failed, storing original', err);
+    return blobToDataUrl(blob);
+  }
+}
+
 async function fileToDataUrl(file) {
-  return blobToDataUrl(file);
+  return imageBlobToDataUrl(file);
+}
+
+function sizeToastPrefix(dataUrl) {
+  return `저장크기 ${formatBytes(dataUrlBytes(dataUrl))}`;
 }
 
 async function imageFileInputChanged(target, input) {
   const file = input.files[0];
   if (!file) return;
+  showToast('이미지 처리 중...');
   const data = await fileToDataUrl(file);
   setFormImage(target, data);
   setPasteTarget(target);
-  showToast(target === 'problem' ? '문제 이미지를 넣었어' : '해설 이미지를 넣었어');
+  showToast(`${target === 'problem' ? '문제 이미지' : '해설 이미지'}를 넣었어 · ${sizeToastPrefix(data)}`);
 }
 
 async function pasteImageFromClipboardEvent(event, explicitTarget = '') {
@@ -1131,10 +1377,11 @@ async function pasteImageFromClipboardEvent(event, explicitTarget = '') {
   const target = explicitTarget || event.target.closest?.('[data-paste-target]')?.dataset?.pasteTarget || state.activePasteTarget || 'problem';
   const file = item.getAsFile();
   if (!file) return false;
+  showToast('스크린샷 처리 중...');
   const data = await fileToDataUrl(file);
   setFormImage(target, data);
   setPasteTarget(target);
-  showToast(target === 'problem' ? '문제 스샷을 붙여넣었어' : '해설 스샷을 붙여넣었어');
+  showToast(`${target === 'problem' ? '문제 스샷' : '해설 스샷'}을 붙여넣었어 · ${sizeToastPrefix(data)}`);
   return true;
 }
 
@@ -1150,9 +1397,10 @@ async function pasteImageWithClipboardApi(target) {
       const type = item.types.find((t) => t.startsWith('image/'));
       if (!type) continue;
       const blob = await item.getType(type);
-      const data = await blobToDataUrl(blob);
+      showToast('스크린샷 처리 중...');
+      const data = await imageBlobToDataUrl(blob);
       setFormImage(target, data);
-      showToast(target === 'problem' ? '문제 스샷을 붙여넣었어' : '해설 스샷을 붙여넣었어');
+      showToast(`${target === 'problem' ? '문제 스샷' : '해설 스샷'}을 붙여넣었어 · ${sizeToastPrefix(data)}`);
       return;
     }
     showToast('클립보드에 이미지가 없어');
@@ -1161,58 +1409,82 @@ async function pasteImageWithClipboardApi(target) {
   }
 }
 
+function storageErrorMessage(err) {
+  const name = String(err?.name || '');
+  const msg = String(err?.message || err || '');
+  if (name.includes('Quota') || msg.includes('quota') || msg.includes('Quota')) {
+    return '저장공간이 부족해. 이미지 저장 방식을 3000문제용 압축으로 바꾸거나 기존 문제를 백업 후 정리해줘.';
+  }
+  return '저장 중 오류가 났어. 새로고침 후 다시 시도해줘.';
+}
+
 async function saveProblemFromForm(event) {
   event.preventDefault();
-  const editingId = els.editingId.value;
-  const existing = editingId ? state.problems.find((p) => p.id === editingId) : null;
+  if (state.saveBusy) return;
+  state.saveBusy = true;
+  const submitBtn = event.submitter || els.problemForm.querySelector('button[type="submit"]');
+  if (submitBtn) submitBtn.disabled = true;
 
-  let imageData = state.formProblemImageData || existing?.imageData || '';
-  if (!imageData && els.imageInput.files[0]) imageData = await fileToDataUrl(els.imageInput.files[0]);
+  try {
+    const editingId = els.editingId.value;
+    const existing = editingId ? state.problems.find((p) => p.id === editingId) : null;
 
-  let explanationImageData = state.formExplanationImageData || existing?.explanationImageData || '';
-  if (!explanationImageData && els.explanationImageInput.files[0]) {
-    explanationImageData = await fileToDataUrl(els.explanationImageInput.files[0]);
+    let imageData = state.formProblemImageData || existing?.imageData || '';
+    if (!imageData && els.imageInput.files[0]) imageData = await fileToDataUrl(els.imageInput.files[0]);
+
+    let explanationImageData = state.formExplanationImageData || existing?.explanationImageData || '';
+    if (!explanationImageData && els.explanationImageInput.files[0]) {
+      explanationImageData = await fileToDataUrl(els.explanationImageInput.files[0]);
+    }
+
+    if (!existing && !imageData) {
+      showToast('문제 이미지를 올려줘');
+      return;
+    }
+    if (!imageData) {
+      showToast('문제 이미지를 올려줘');
+      return;
+    }
+
+    const now = Date.now();
+    const problem = {
+      id: existing?.id || uid(),
+      subject: canonicalSubject(els.subjectInput.value),
+      year: normalizedYear(els.yearInput?.value),
+      category: els.categoryInput.value.trim(),
+      answer: Number(els.answerInput.value),
+      difficulty: els.difficultyInput.value,
+      imageData,
+      explanation: els.explanationInput.value.trim(),
+      explanationImageData,
+      tags: tagsToArray(els.tagsInput.value),
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      attempts: existing?.attempts || 0,
+      correct: existing?.correct || 0,
+      wrong: existing?.wrong || 0,
+      totalTimeMs: existing?.totalTimeMs || 0,
+      lastTimeMs: existing?.lastTimeMs || 0,
+      lastAnsweredAt: existing?.lastAnsweredAt || 0,
+      lastResult: existing?.lastResult || '',
+      wrongActive: existing?.wrongActive || false,
+      correctStreak: existing?.correctStreak || 0,
+      flagged: existing?.flagged || false,
+      annotations: existing?.annotations || []
+    };
+
+    await put(STORES.problems, problem);
+    await refresh();
+    resetForm();
+    showToast(`${editingId ? '수정했어' : '저장했어'} · 현재 ${state.problems.length}문제`);
+    switchView('addView');
+  } catch (err) {
+    console.error(err);
+    showToast(storageErrorMessage(err));
+  } finally {
+    state.saveBusy = false;
+    if (submitBtn) submitBtn.disabled = false;
   }
-
-  if (!existing && !imageData) {
-    showToast('문제 이미지를 올려줘');
-    return;
-  }
-  if (!imageData) {
-    showToast('문제 이미지를 올려줘');
-    return;
-  }
-
-  const now = Date.now();
-  const problem = {
-    id: existing?.id || uid(),
-    subject: els.subjectInput.value.trim() || '미분류',
-    category: els.categoryInput.value.trim(),
-    answer: Number(els.answerInput.value),
-    difficulty: els.difficultyInput.value,
-    imageData,
-    explanation: els.explanationInput.value.trim(),
-    explanationImageData,
-    tags: tagsToArray(els.tagsInput.value),
-    createdAt: existing?.createdAt || now,
-    updatedAt: now,
-    attempts: existing?.attempts || 0,
-    correct: existing?.correct || 0,
-    wrong: existing?.wrong || 0,
-    totalTimeMs: existing?.totalTimeMs || 0,
-    lastTimeMs: existing?.lastTimeMs || 0,
-    lastAnsweredAt: existing?.lastAnsweredAt || 0,
-    lastResult: existing?.lastResult || '',
-    wrongActive: existing?.wrongActive || false,
-    correctStreak: existing?.correctStreak || 0,
-    flagged: existing?.flagged || false,
-    annotations: existing?.annotations || []
-  };
-  await put(STORES.problems, problem);
-  await refresh();
-  resetForm();
-  showToast(editingId ? '수정했어' : '저장했어');
-  switchView('solveView');
 }
 
 async function exportData() {
@@ -1220,7 +1492,7 @@ async function exportData() {
   const history = await getAll(STORES.history);
   const payload = {
     app: 'PSAT 랜덤 오답노트',
-    version: 2,
+    version: 11,
     exportedAt: new Date().toISOString(),
     problems,
     history
@@ -1625,12 +1897,23 @@ async function wipeAll() {
 function bindEvents() {
   els.tabs.forEach((tab) => tab.addEventListener('click', () => switchView(tab.dataset.view)));
   els.startBtn.addEventListener('click', () => {
-    const problems = filterProblems(els.modeSelect.value, els.subjectFilter.value);
+    const problems = filterProblems(els.modeSelect.value, els.subjectFilter.value, els.yearFilter?.value || '');
+    const label = `${els.subjectFilter.value || '전체'}${els.yearFilter?.value ? ' · ' + els.yearFilter.value + '년' : ''} 랜덤`;
     startSession(problems, {
       count: Number(els.sessionCount.value || 0),
-      minutes: Number(els.sessionMinutes.value || 0)
+      minutes: Number(els.sessionMinutes.value || 0),
+      label
     });
   });
+  els.quickStartBtns.forEach((btn) => btn.addEventListener('click', () => {
+    const subject = btn.dataset.subject || '언어';
+    const count = Number(btn.dataset.count || 10);
+    const problems = filterProblems('all', subject, els.yearFilter?.value || '');
+    startSession(problems, { count, minutes: 0, label: `${subject} 랜덤 ${count}문제` });
+  }));
+
+  if (els.yearFilter) els.yearFilter.addEventListener('change', () => {});
+
   els.continueBtn.addEventListener('click', () => {
     const id = localStorage.getItem('psat-last-problem-id');
     const p = state.problems.find((item) => item.id === id);
@@ -1652,12 +1935,13 @@ function bindEvents() {
     showToast('반영했어');
   });
 
-  els.choices.forEach((btn) => btn.addEventListener('click', () => {
+  els.choices.forEach((btn) => btn.addEventListener('click', async () => {
     if (state.checked) return;
     state.selectedAnswer = Number(btn.dataset.answer);
     els.choices.forEach((b) => b.classList.toggle('selected', b === btn));
+    await checkAnswer({ autoAdvance: true });
   }));
-  els.checkBtn.addEventListener('click', checkAnswer);
+  els.checkBtn.addEventListener('click', () => checkAnswer({ autoAdvance: false }));
   els.showExpBtn.addEventListener('click', showExplanation);
   els.flagBtn.addEventListener('click', toggleFlag);
   els.nextBtn.addEventListener('click', nextProblem);
@@ -1712,6 +1996,8 @@ function bindEvents() {
 
   els.searchInput.addEventListener('input', renderProblemList);
   els.listSubjectFilter.addEventListener('change', renderProblemList);
+  if (els.listYearFilter) els.listYearFilter.addEventListener('change', renderProblemList);
+  if (els.sessionSummary) els.sessionSummary.addEventListener('click', handleSessionSummaryClick);
   els.exportBtn.addEventListener('click', exportData);
   els.importInput.addEventListener('change', importData);
   els.wipeBtn.addEventListener('click', wipeAll);

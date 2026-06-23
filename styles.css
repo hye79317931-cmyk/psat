@@ -1027,3 +1027,190 @@ body.solve-active {
     font-size: 13px;
   }
 }
+
+
+/* v9: 왼쪽 시계 겹침 제거 + 나가기 버튼 왼쪽 배치 */
+#solvePanel.fullscreen-solve .note-toolbar {
+  padding-top: max(4px, env(safe-area-inset-top)) !important;
+  gap: 4px !important;
+}
+
+#solvePanel.fullscreen-solve .left-timer-box {
+  position: static !important;
+  top: auto !important;
+  z-index: auto !important;
+  flex: 0 0 auto;
+  min-height: 42px !important;
+  padding: 3px 2px !important;
+  margin: 0 0 2px !important;
+  box-shadow: none !important;
+}
+
+#solvePanel.fullscreen-solve .left-timer-label {
+  font-size: 8px !important;
+  line-height: 1 !important;
+}
+
+#solvePanel.fullscreen-solve .left-timer-box strong {
+  font-size: 14px !important;
+  line-height: 1.05 !important;
+  margin-top: 1px !important;
+}
+
+#solvePanel.fullscreen-solve .left-session-timer {
+  font-size: 7.5px !important;
+  line-height: 1.05 !important;
+  margin-top: 1px !important;
+}
+
+#solvePanel.fullscreen-solve .note-toolbar .mini-exit {
+  display: block !important;
+  width: 100% !important;
+  min-height: 29px !important;
+  margin: 0 0 2px !important;
+  padding: 4px 2px !important;
+  font-size: 10px !important;
+  border-radius: 10px !important;
+  background: rgba(248, 250, 252, .10) !important;
+  border: 1px solid rgba(255,255,255,.18) !important;
+  color: #f8fafc !important;
+}
+
+@media (max-width: 520px) {
+  #solvePanel.fullscreen-solve .left-timer-box {
+    min-height: 39px !important;
+    padding: 3px 1px !important;
+  }
+  #solvePanel.fullscreen-solve .left-timer-box strong {
+    font-size: 13px !important;
+  }
+  #solvePanel.fullscreen-solve .note-toolbar .mini-exit {
+    min-height: 27px !important;
+    font-size: 9.5px !important;
+  }
+}
+
+@media (max-height: 640px) {
+  #solvePanel.fullscreen-solve .left-timer-box {
+    min-height: 34px !important;
+    padding: 2px 1px !important;
+  }
+  #solvePanel.fullscreen-solve .left-timer-label {
+    display: none !important;
+  }
+  #solvePanel.fullscreen-solve .left-timer-box strong {
+    font-size: 12px !important;
+  }
+  #solvePanel.fullscreen-solve .left-session-timer {
+    font-size: 7px !important;
+  }
+  #solvePanel.fullscreen-solve .note-toolbar .mini-exit {
+    min-height: 24px !important;
+    font-size: 9px !important;
+  }
+}
+
+/* v11: PSAT 대분류/연도 랜덤 세트 + 세트 완료 화면 */
+.quick-panel {
+  margin: 10px 0 16px;
+  padding: 12px;
+  border: 1px solid rgba(125,211,252,.22);
+  border-radius: 16px;
+  background: rgba(125,211,252,.08);
+}
+.quick-title {
+  font-weight: 900;
+  margin-bottom: 8px;
+}
+.quick-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.quick-buttons button {
+  min-height: 42px;
+  padding: 9px 8px;
+  font-size: 13px;
+}
+.session-summary {
+  border-color: rgba(134,239,172,.28);
+  background: rgba(134,239,172,.08);
+}
+.session-summary h2 { margin-top: 0; }
+.summary-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+.summary-stats div {
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.06);
+}
+.summary-stats span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.summary-stats strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 19px;
+}
+.summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.summary-actions button {
+  flex: 1 1 130px;
+}
+.summary-wrong-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.summary-wrong-item {
+  display: grid;
+  grid-template-columns: 62px 1fr;
+  gap: 10px;
+  padding: 9px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.06);
+}
+.summary-wrong-item img {
+  width: 62px;
+  height: 86px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: #fff;
+}
+.summary-wrong-item strong,
+.summary-wrong-item span {
+  display: block;
+}
+.summary-wrong-item span {
+  margin: 4px 0 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.summary-wrong-item button {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .quick-buttons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .summary-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .summary-stats div:last-child { grid-column: 1 / -1; }
+}
+
+/* 자동 다음문제 방식에서는 채점 버튼을 보조 버튼처럼 작게 둡니다. */
+#solvePanel.fullscreen-solve #checkBtn {
+  flex: .75 1 54px;
+  opacity: .78;
+}
