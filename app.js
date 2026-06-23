@@ -262,6 +262,38 @@ function tagsToArray(value) {
     .filter(Boolean);
 }
 
+const FORM_PREF_KEY = 'psat-form-preferences-v12';
+
+function readFormPreferences() {
+  try {
+    return JSON.parse(localStorage.getItem(FORM_PREF_KEY) || '{}') || {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function saveFormPreferences() {
+  const prefs = {
+    subject: els.subjectInput?.value || '언어',
+    year: normalizedYear(els.yearInput?.value),
+    imageQuality: els.imageQualityInput?.value || 'sharp'
+  };
+  localStorage.setItem(FORM_PREF_KEY, JSON.stringify(prefs));
+}
+
+function applyFormPreferences() {
+  const prefs = readFormPreferences();
+  if (els.subjectInput) {
+    const subject = SUBJECT_GROUPS.includes(canonicalSubject(prefs.subject)) ? canonicalSubject(prefs.subject) : '언어';
+    els.subjectInput.value = subject;
+  }
+  if (els.yearInput) els.yearInput.value = normalizedYear(prefs.year);
+  if (els.imageQualityInput) {
+    const quality = ['sharp', 'bulk', 'original'].includes(prefs.imageQuality) ? prefs.imageQuality : 'sharp';
+    els.imageQualityInput.value = quality;
+  }
+}
+
 function choiceLabel(value) {
   return ['①', '②', '③', '④', '⑤'][Number(value) - 1] || value;
 }
@@ -450,9 +482,8 @@ function loadCurrentProblem(problem) {
   els.explanationBox.textContent = '';
   els.problemTitle.textContent = `문제 ${state.queueIndex + 1}/${state.queue.length}`;
   const avg = averageTime(problem) ? `평균 ${formatLongTime(averageTime(problem))}` : '기록 없음';
-  const tags = (problem.tags || []).length ? ` · #${problem.tags.join(' #')}` : '';
   const yearText = normalizedYear(problem.year) ? ` · ${normalizedYear(problem.year)}년` : '';
-  els.problemMeta.textContent = `${canonicalSubject(problem.subject)}${yearText} · ${problem.category || '분류없음'} · 난이도 ${problem.difficulty || '중'} · 정답률 ${accuracy(problem)}% · ${avg}${tags}`;
+  els.problemMeta.textContent = `${canonicalSubject(problem.subject)}${yearText} · 정답률 ${accuracy(problem)}% · ${avg}`;
   els.problemImage.src = problem.imageData;
   els.flagBtn.textContent = problem.flagged ? '다시보기 해제' : '다시보기 지정';
   setDrawTool('pen');
@@ -676,7 +707,7 @@ function renderSummaryWrongItems(ids) {
     <article class="summary-wrong-item">
       <img src="${p.imageData}" alt="틀린 문제 ${idx + 1}">
       <div>
-        <strong>${idx + 1}. ${escapeHtml(canonicalSubject(p.subject))}${normalizedYear(p.year) ? ` · ${escapeHtml(normalizedYear(p.year))}년` : ''} · ${escapeHtml(p.category || '분류없음')}</strong>
+        <strong>${idx + 1}. ${escapeHtml(canonicalSubject(p.subject))}${normalizedYear(p.year) ? ` · ${escapeHtml(normalizedYear(p.year))}년` : ''}</strong>
         <span>정답 ${choiceLabel(p.answer)} · 최근 풀이 ${formatLongTime(p.lastTimeMs || 0)}</span>
         <button data-action="solve" data-id="${p.id}" type="button">이 문제 풀기</button>
       </div>
@@ -1063,7 +1094,7 @@ function renderProblemList() {
     if (year && normalizedYear(p.year) !== year) return false;
     if (!query) return true;
     const imageKeyword = p.explanationImageData ? '해설이미지 스크린샷' : '';
-    const hay = [canonicalSubject(p.subject), p.subject, p.year, p.category, p.difficulty, p.explanation, imageKeyword, ...(p.tags || [])].join(' ').toLowerCase();
+    const hay = [canonicalSubject(p.subject), p.subject, p.year, p.explanation, imageKeyword].join(' ').toLowerCase();
     return hay.includes(query);
   });
   els.problemList.innerHTML = '';
@@ -1093,15 +1124,13 @@ function problemItem(p, wrongOnly) {
   const div = document.createElement('article');
   div.className = 'item';
   const streak = p.wrongActive ? `오답해제까지 ${Math.max(0, WRONG_CLEAR_STREAK - (p.correctStreak || 0))}회 정답 필요` : '오답 아님';
-  const tags = (p.tags || []).map((t) => `#${escapeHtml(t)}`).join(' ');
   const hasExpImage = p.explanationImageData ? ' · 해설이미지 있음' : '';
   div.innerHTML = `
     <img src="${p.imageData}" alt="문제 썸네일">
     <div>
-      <h3>${escapeHtml(canonicalSubject(p.subject))}${normalizedYear(p.year) ? ` · ${escapeHtml(normalizedYear(p.year))}년` : ''} · ${escapeHtml(p.category || '분류없음')} · 정답 ${choiceLabel(p.answer)}</h3>
-      <p>난이도 ${escapeHtml(p.difficulty || '중')} · 풀이 ${p.attempts || 0}회 · 정답률 ${accuracy(p)}% · 평균 ${formatLongTime(averageTime(p))}</p>
+      <h3>${escapeHtml(canonicalSubject(p.subject))}${normalizedYear(p.year) ? ` · ${escapeHtml(normalizedYear(p.year))}년` : ''} · 정답 ${choiceLabel(p.answer)}</h3>
+      <p>풀이 ${p.attempts || 0}회 · 정답률 ${accuracy(p)}% · 평균 ${formatLongTime(averageTime(p))}</p>
       <p>${escapeHtml(streak)}${p.flagged ? ' · 다시보기 지정' : ''}${hasExpImage}</p>
-      <p>${tags}</p>
       <div class="item-actions">
         <button data-action="solve" data-id="${p.id}" type="button">풀기</button>
         <button data-action="edit" data-id="${p.id}" class="secondary" type="button">수정</button>
@@ -1234,11 +1263,18 @@ function clearFormImage(target) {
 }
 
 function resetForm() {
+  const keepSubject = els.subjectInput?.value || readFormPreferences().subject || '언어';
+  const keepYear = els.yearInput?.value || readFormPreferences().year || '';
+  const keepQuality = els.imageQualityInput?.value || readFormPreferences().imageQuality || 'sharp';
   els.problemForm.reset();
   els.editingId.value = '';
-  els.subjectInput.value = '언어';
-  els.difficultyInput.value = '중';
-  if (els.yearInput) els.yearInput.value = '';
+  els.subjectInput.value = SUBJECT_GROUPS.includes(canonicalSubject(keepSubject)) ? canonicalSubject(keepSubject) : '언어';
+  if (els.yearInput) els.yearInput.value = normalizedYear(keepYear);
+  if (els.imageQualityInput) els.imageQualityInput.value = ['sharp', 'bulk', 'original'].includes(keepQuality) ? keepQuality : 'sharp';
+  if (els.categoryInput) els.categoryInput.value = '';
+  if (els.difficultyInput) els.difficultyInput.value = '중';
+  if (els.tagsInput) els.tagsInput.value = '';
+  saveFormPreferences();
   els.formTitle.textContent = '문제 등록';
   clearFormImage('problem');
   clearFormImage('explanation');
@@ -1251,11 +1287,12 @@ function editProblem(p) {
   els.editingId.value = p.id;
   els.subjectInput.value = SUBJECT_GROUPS.includes(canonicalSubject(p.subject)) ? canonicalSubject(p.subject) : '언어';
   if (els.yearInput) els.yearInput.value = normalizedYear(p.year);
-  els.categoryInput.value = p.category || '';
+  if (els.categoryInput) els.categoryInput.value = p.category || '';
   els.answerInput.value = String(p.answer || 1);
-  els.difficultyInput.value = p.difficulty || '중';
+  if (els.difficultyInput) els.difficultyInput.value = p.difficulty || '중';
   els.explanationInput.value = p.explanation || '';
-  els.tagsInput.value = (p.tags || []).join(', ');
+  if (els.tagsInput) els.tagsInput.value = (p.tags || []).join(', ');
+  saveFormPreferences();
   els.imageInput.value = '';
   els.explanationImageInput.value = '';
   setFormImage('problem', p.imageData || '');
@@ -1446,18 +1483,19 @@ async function saveProblemFromForm(event) {
       return;
     }
 
+    saveFormPreferences();
     const now = Date.now();
     const problem = {
       id: existing?.id || uid(),
       subject: canonicalSubject(els.subjectInput.value),
       year: normalizedYear(els.yearInput?.value),
-      category: els.categoryInput.value.trim(),
+      category: els.categoryInput?.value?.trim() || '',
       answer: Number(els.answerInput.value),
-      difficulty: els.difficultyInput.value,
+      difficulty: els.difficultyInput?.value || '중',
       imageData,
       explanation: els.explanationInput.value.trim(),
       explanationImageData,
-      tags: tagsToArray(els.tagsInput.value),
+      tags: tagsToArray(els.tagsInput?.value || ''),
       createdAt: existing?.createdAt || now,
       updatedAt: now,
       attempts: existing?.attempts || 0,
@@ -1492,7 +1530,7 @@ async function exportData() {
   const history = await getAll(STORES.history);
   const payload = {
     app: 'PSAT 랜덤 오답노트',
-    version: 11,
+    version: 12,
     exportedAt: new Date().toISOString(),
     problems,
     history
@@ -1976,6 +2014,9 @@ function bindEvents() {
 
   els.problemForm.addEventListener('submit', saveProblemFromForm);
   els.resetFormBtn.addEventListener('click', resetForm);
+  if (els.subjectInput) els.subjectInput.addEventListener('change', saveFormPreferences);
+  if (els.yearInput) els.yearInput.addEventListener('input', saveFormPreferences);
+  if (els.imageQualityInput) els.imageQualityInput.addEventListener('change', saveFormPreferences);
   els.imageInput.addEventListener('change', () => imageFileInputChanged('problem', els.imageInput));
   els.explanationImageInput.addEventListener('change', () => imageFileInputChanged('explanation', els.explanationImageInput));
   els.problemPasteZone.addEventListener('click', () => setPasteTarget('problem'));
@@ -2032,6 +2073,7 @@ async function registerServiceWorker() {
 
 async function init() {
   bindEvents();
+  applyFormPreferences();
   resetForm();
   updateSizeLabels();
   setDrawEnabled(true);
