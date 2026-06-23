@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#121826" />
+  <title>PSAT 랜덤 오답노트</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="assets/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>PSAT 랜덤 오답노트</h1>
+      <p>이미지 문제 · 정답체크 · 해설 · 랜덤 · 오답 · 시간 · 스타일러스 필기</p>
+    </div>
+    <button id="installBtn" class="ghost hidden" type="button">홈화면 설치</button>
+  </header>
+
+  <nav class="tabs" aria-label="주요 메뉴">
+    <button class="tab active" data-view="solveView" type="button">문제풀기</button>
+    <button class="tab" data-view="addView" type="button">문제등록</button>
+    <button class="tab" data-view="wrongView" type="button">오답</button>
+    <button class="tab" data-view="listView" type="button">목록</button>
+    <button class="tab" data-view="statsView" type="button">통계/백업</button>
+  </nav>
+
+  <main>
+    <section id="solveView" class="view active">
+      <section class="card">
+        <h2>랜덤 출제 설정</h2>
+        <div class="grid two">
+          <label>출제 범위
+            <select id="modeSelect">
+              <option value="all">전체 랜덤</option>
+              <option value="wrong">틀린 문제만</option>
+              <option value="slow">오래 걸린 문제만</option>
+              <option value="unseen">안 푼 문제만</option>
+              <option value="flagged">다시보기 지정</option>
+            </select>
+          </label>
+          <label>과목
+            <select id="subjectFilter"><option value="">전체</option></select>
+          </label>
+          <label>세션 문제 수
+            <input id="sessionCount" type="number" min="1" step="1" placeholder="비우면 전체" />
+          </label>
+          <label>제한시간(분)
+            <input id="sessionMinutes" type="number" min="0" step="1" value="0" />
+          </label>
+        </div>
+        <div class="row wrap">
+          <button id="startBtn" type="button">랜덤 시작</button>
+          <button id="continueBtn" class="secondary" type="button">마지막 문제 계속</button>
+        </div>
+        <p class="hint">오답은 2번 연속 맞히면 자동으로 오답노트에서 해제됩니다.</p>
+      </section>
+
+      <section id="emptySolve" class="card muted-card">
+        <h2>아직 등록된 문제가 없어</h2>
+        <p>문제등록에서 PSAT 문제 사진을 올리고 정답·해설을 입력하면 바로 랜덤으로 풀 수 있어.</p>
+      </section>
+
+      <section id="solvePanel" class="card hidden">
+        <div class="solve-top">
+          <div>
+            <h2 id="problemTitle">문제</h2>
+            <p id="problemMeta" class="meta"></p>
+          </div>
+          <div class="timer-box">
+            <span>현재 문제</span>
+            <strong id="questionTimer">00:00</strong>
+            <span id="sessionTimer" class="session-timer hidden">세션 00:00</span>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <button id="drawToggle" class="secondary" type="button">필기모드 OFF</button>
+          <button id="penBtn" class="secondary active-tool" type="button">펜</button>
+          <button id="eraserBtn" class="secondary" type="button">지우개</button>
+          <label class="compact">굵기
+            <input id="penSize" type="range" min="1" max="20" value="4" />
+          </label>
+          <button id="clearInkBtn" class="danger-lite" type="button">필기 지우기</button>
+          <button id="zoomOutBtn" class="secondary" type="button">−</button>
+          <span id="zoomLabel" class="badge">100%</span>
+          <button id="zoomInBtn" class="secondary" type="button">＋</button>
+        </div>
+
+        <div id="imageScroller" class="image-scroller">
+          <div id="imageWrap" class="image-wrap">
+            <img id="problemImage" alt="문제 이미지" />
+            <canvas id="inkCanvas" aria-label="필기 캔버스"></canvas>
+          </div>
+        </div>
+
+        <div class="answer-box" role="group" aria-label="정답 선택">
+          <button class="choice" data-answer="1" type="button">①</button>
+          <button class="choice" data-answer="2" type="button">②</button>
+          <button class="choice" data-answer="3" type="button">③</button>
+          <button class="choice" data-answer="4" type="button">④</button>
+          <button class="choice" data-answer="5" type="button">⑤</button>
+        </div>
+
+        <div class="row wrap">
+          <button id="checkBtn" type="button">정답 체크</button>
+          <button id="showExpBtn" class="secondary" type="button">해설 보기</button>
+          <button id="flagBtn" class="secondary" type="button">다시보기 지정</button>
+          <button id="nextBtn" class="secondary" type="button">다음 문제</button>
+        </div>
+
+        <div id="resultBox" class="result hidden"></div>
+        <div id="explanationBox" class="explanation hidden"></div>
+      </section>
+    </section>
+
+    <section id="addView" class="view">
+      <section class="card">
+        <h2 id="formTitle">문제 등록</h2>
+        <form id="problemForm">
+          <input id="editingId" type="hidden" />
+          <div class="grid two">
+            <label>과목
+              <input id="subjectInput" type="text" value="언어논리" placeholder="예: 언어논리, 자료해석, 상황판단" required />
+            </label>
+            <label>분류
+              <input id="categoryInput" type="text" placeholder="예: 추론, 내용일치, 논증" />
+            </label>
+            <label>정답
+              <select id="answerInput" required>
+                <option value="1">①</option>
+                <option value="2">②</option>
+                <option value="3">③</option>
+                <option value="4">④</option>
+                <option value="5">⑤</option>
+              </select>
+            </label>
+            <label>난이도
+              <select id="difficultyInput">
+                <option value="중">중</option>
+                <option value="하">하</option>
+                <option value="상">상</option>
+              </select>
+            </label>
+          </div>
+
+          <label>문제 이미지
+            <input id="imageInput" type="file" accept="image/*" />
+          </label>
+          <p class="hint">사진은 폰 내부 IndexedDB에 저장됩니다. 많은 문제를 넣을 거면 주기적으로 백업 파일을 만들어둬.</p>
+          <img id="previewImage" class="preview hidden" alt="미리보기" />
+
+          <label>해설
+            <textarea id="explanationInput" rows="5" placeholder="정답 근거, 빠른 풀이 포인트, 함정 선지 등을 적어둬."></textarea>
+          </label>
+          <label>태그
+            <input id="tagsInput" type="text" placeholder="예: 조선왕조실록, 추론, 고난도" />
+          </label>
+          <div class="row wrap">
+            <button type="submit">저장</button>
+            <button id="resetFormBtn" class="secondary" type="button">새 문제로 초기화</button>
+          </div>
+        </form>
+      </section>
+    </section>
+
+    <section id="wrongView" class="view">
+      <section class="card">
+        <h2>오답 다시보기</h2>
+        <div class="row wrap">
+          <button id="solveWrongBtn" type="button">오답 랜덤 풀기</button>
+          <button id="clearSolvedWrongBtn" class="secondary" type="button">2연속 정답 해제 반영</button>
+        </div>
+        <div id="wrongList" class="list"></div>
+      </section>
+    </section>
+
+    <section id="listView" class="view">
+      <section class="card">
+        <h2>문제 목록</h2>
+        <div class="grid two">
+          <label>검색
+            <input id="searchInput" type="search" placeholder="과목, 분류, 태그, 해설 검색" />
+          </label>
+          <label>과목 필터
+            <select id="listSubjectFilter"><option value="">전체</option></select>
+          </label>
+        </div>
+        <div id="problemList" class="list"></div>
+      </section>
+    </section>
+
+    <section id="statsView" class="view">
+      <section class="card">
+        <h2>통계</h2>
+        <div id="statsCards" class="stats-grid"></div>
+      </section>
+      <section class="card">
+        <h2>백업 / 복원</h2>
+        <div class="row wrap">
+          <button id="exportBtn" type="button">백업 파일 내보내기</button>
+          <label class="file-button">백업 파일 불러오기
+            <input id="importInput" type="file" accept="application/json" />
+          </label>
+        </div>
+        <p class="hint">폰 교체, 브라우저 데이터 삭제 전에 반드시 백업해. 복원은 같은 앱에서 JSON 파일을 선택하면 됩니다.</p>
+      </section>
+      <section class="card danger-zone">
+        <h2>초기화</h2>
+        <button id="wipeBtn" class="danger" type="button">전체 데이터 삭제</button>
+      </section>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>
