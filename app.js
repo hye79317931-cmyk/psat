@@ -56,6 +56,14 @@ const els = {
   difficultyInput: $('difficultyInput'),
   imageInput: $('imageInput'),
   previewImage: $('previewImage'),
+  problemPasteZone: $('problemPasteZone'),
+  pasteProblemBtn: $('pasteProblemBtn'),
+  clearProblemImageBtn: $('clearProblemImageBtn'),
+  explanationImageInput: $('explanationImageInput'),
+  previewExplanationImage: $('previewExplanationImage'),
+  explanationPasteZone: $('explanationPasteZone'),
+  pasteExplanationBtn: $('pasteExplanationBtn'),
+  clearExplanationImageBtn: $('clearExplanationImageBtn'),
   explanationInput: $('explanationInput'),
   tagsInput: $('tagsInput'),
   resetFormBtn: $('resetFormBtn'),
@@ -88,7 +96,10 @@ const state = {
   currentStroke: null,
   zoom: 1,
   db: null,
-  deferredInstallPrompt: null
+  deferredInstallPrompt: null,
+  activePasteTarget: 'problem',
+  formProblemImageData: '',
+  formExplanationImageData: ''
 };
 
 function openDb() {
@@ -159,7 +170,7 @@ function showToast(message) {
   els.toast.textContent = message;
   els.toast.classList.remove('hidden');
   clearTimeout(showToast._timer);
-  showToast._timer = setTimeout(() => els.toast.classList.add('hidden'), 2200);
+  showToast._timer = setTimeout(() => els.toast.classList.add('hidden'), 2400);
 }
 
 function formatTime(ms) {
@@ -204,6 +215,15 @@ function averageTime(problem) {
 
 function accuracy(problem) {
   return problem.attempts ? Math.round(((problem.correct || 0) / problem.attempts) * 100) : 0;
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
 }
 
 function getSubjectSet() {
@@ -419,10 +439,26 @@ async function checkAnswer() {
 
 function showExplanation() {
   if (!state.current) return;
-  const text = state.current.explanation && state.current.explanation.trim()
-    ? state.current.explanation.trim()
-    : '등록된 해설이 없습니다.';
-  els.explanationBox.textContent = text;
+  const hasText = state.current.explanation && state.current.explanation.trim();
+  const hasImage = state.current.explanationImageData;
+  els.explanationBox.innerHTML = '';
+  if (!hasText && !hasImage) {
+    els.explanationBox.textContent = '등록된 해설이 없습니다.';
+  } else {
+    if (hasImage) {
+      const img = document.createElement('img');
+      img.src = state.current.explanationImageData;
+      img.alt = '해설 이미지';
+      img.className = 'explanation-image';
+      els.explanationBox.appendChild(img);
+    }
+    if (hasText) {
+      const text = document.createElement('div');
+      text.className = 'explanation-text';
+      text.textContent = state.current.explanation.trim();
+      els.explanationBox.appendChild(text);
+    }
+  }
   els.explanationBox.classList.remove('hidden');
 }
 
@@ -612,7 +648,8 @@ function renderProblemList() {
   const list = state.problems.filter((p) => {
     if (subject && (p.subject || '미분류') !== subject) return false;
     if (!query) return true;
-    const hay = [p.subject, p.category, p.difficulty, p.explanation, ...(p.tags || [])].join(' ').toLowerCase();
+    const imageKeyword = p.explanationImageData ? '해설이미지 스크린샷' : '';
+    const hay = [p.subject, p.category, p.difficulty, p.explanation, imageKeyword, ...(p.tags || [])].join(' ').toLowerCase();
     return hay.includes(query);
   });
   els.problemList.innerHTML = '';
@@ -642,13 +679,15 @@ function problemItem(p, wrongOnly) {
   const div = document.createElement('article');
   div.className = 'item';
   const streak = p.wrongActive ? `오답해제까지 ${Math.max(0, WRONG_CLEAR_STREAK - (p.correctStreak || 0))}회 정답 필요` : '오답 아님';
+  const tags = (p.tags || []).map((t) => `#${escapeHtml(t)}`).join(' ');
+  const hasExpImage = p.explanationImageData ? ' · 해설이미지 있음' : '';
   div.innerHTML = `
     <img src="${p.imageData}" alt="문제 썸네일">
     <div>
-      <h3>${p.subject || '미분류'} · ${p.category || '분류없음'} · 정답 ${choiceLabel(p.answer)}</h3>
-      <p>난이도 ${p.difficulty || '중'} · 풀이 ${p.attempts || 0}회 · 정답률 ${accuracy(p)}% · 평균 ${formatLongTime(averageTime(p))}</p>
-      <p>${streak}${p.flagged ? ' · 다시보기 지정' : ''}</p>
-      <p>${(p.tags || []).map((t) => `#${t}`).join(' ')}</p>
+      <h3>${escapeHtml(p.subject || '미분류')} · ${escapeHtml(p.category || '분류없음')} · 정답 ${choiceLabel(p.answer)}</h3>
+      <p>난이도 ${escapeHtml(p.difficulty || '중')} · 풀이 ${p.attempts || 0}회 · 정답률 ${accuracy(p)}% · 평균 ${formatLongTime(averageTime(p))}</p>
+      <p>${escapeHtml(streak)}${p.flagged ? ' · 다시보기 지정' : ''}${hasExpImage}</p>
+      <p>${tags}</p>
       <div class="item-actions">
         <button data-action="solve" data-id="${p.id}" type="button">풀기</button>
         <button data-action="edit" data-id="${p.id}" class="secondary" type="button">수정</button>
@@ -701,6 +740,7 @@ function renderStats() {
   const slow = state.problems.filter((p) => averageTime(p) >= SLOW_MS || (p.lastTimeMs || 0) >= SLOW_MS).length;
   const avg = attempts ? state.problems.reduce((sum, p) => sum + (p.totalTimeMs || 0), 0) / attempts : 0;
   const flagged = state.problems.filter((p) => p.flagged).length;
+  const expImages = state.problems.filter((p) => p.explanationImageData).length;
   const data = [
     ['전체 문제', `${total}개`],
     ['총 풀이', `${attempts}회`],
@@ -709,9 +749,42 @@ function renderStats() {
     ['안 푼 문제', `${unseen}개`],
     ['오래 걸린 문제', `${slow}개`],
     ['평균 풀이시간', formatLongTime(avg)],
+    ['해설 이미지', `${expImages}개`],
     ['다시보기', `${flagged}개`]
   ];
   els.statsCards.innerHTML = data.map(([label, value]) => `<div class="stat"><span>${label}</span><strong>${value}</strong></div>`).join('');
+}
+
+function setPasteTarget(target) {
+  state.activePasteTarget = target;
+  els.problemPasteZone.classList.toggle('active-paste', target === 'problem');
+  els.explanationPasteZone.classList.toggle('active-paste', target === 'explanation');
+}
+
+function setFormImage(target, dataUrl) {
+  if (target === 'problem') {
+    state.formProblemImageData = dataUrl;
+    els.previewImage.src = dataUrl;
+    els.previewImage.classList.remove('hidden');
+  } else {
+    state.formExplanationImageData = dataUrl;
+    els.previewExplanationImage.src = dataUrl;
+    els.previewExplanationImage.classList.remove('hidden');
+  }
+}
+
+function clearFormImage(target) {
+  if (target === 'problem') {
+    state.formProblemImageData = '';
+    els.imageInput.value = '';
+    els.previewImage.src = '';
+    els.previewImage.classList.add('hidden');
+  } else {
+    state.formExplanationImageData = '';
+    els.explanationImageInput.value = '';
+    els.previewExplanationImage.src = '';
+    els.previewExplanationImage.classList.add('hidden');
+  }
 }
 
 function resetForm() {
@@ -720,9 +793,10 @@ function resetForm() {
   els.subjectInput.value = '언어논리';
   els.difficultyInput.value = '중';
   els.formTitle.textContent = '문제 등록';
-  els.previewImage.classList.add('hidden');
-  els.previewImage.src = '';
+  clearFormImage('problem');
+  clearFormImage('explanation');
   els.imageInput.required = false;
+  setPasteTarget('problem');
 }
 
 function editProblem(p) {
@@ -734,21 +808,28 @@ function editProblem(p) {
   els.difficultyInput.value = p.difficulty || '중';
   els.explanationInput.value = p.explanation || '';
   els.tagsInput.value = (p.tags || []).join(', ');
-  els.previewImage.src = p.imageData;
-  els.previewImage.classList.remove('hidden');
   els.imageInput.value = '';
+  els.explanationImageInput.value = '';
+  setFormImage('problem', p.imageData || '');
+  if (p.explanationImageData) setFormImage('explanation', p.explanationImageData);
+  else clearFormImage('explanation');
   els.imageInput.required = false;
+  setPasteTarget('problem');
   switchView('addView');
 }
 
-async function fileToDataUrl(file) {
+async function blobToDataUrl(blob) {
   const rawDataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
     reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(blob);
   });
   return compressImage(rawDataUrl);
+}
+
+async function fileToDataUrl(file) {
+  return blobToDataUrl(file);
 }
 
 async function compressImage(dataUrl) {
@@ -757,8 +838,8 @@ async function compressImage(dataUrl) {
     img.onload = () => {
       const maxSide = 2200;
       const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
-      const width = Math.round(img.naturalWidth * scale);
-      const height = Math.round(img.naturalHeight * scale);
+      const width = Math.max(1, Math.round(img.naturalWidth * scale));
+      const height = Math.max(1, Math.round(img.naturalHeight * scale));
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
@@ -773,17 +854,75 @@ async function compressImage(dataUrl) {
   });
 }
 
+async function imageFileInputChanged(target, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const data = await fileToDataUrl(file);
+  setFormImage(target, data);
+  setPasteTarget(target);
+  showToast(target === 'problem' ? '문제 이미지를 넣었어' : '해설 이미지를 넣었어');
+}
+
+async function pasteImageFromClipboardEvent(event, explicitTarget = '') {
+  const items = event.clipboardData?.items ? Array.from(event.clipboardData.items) : [];
+  const item = items.find((entry) => entry.type && entry.type.startsWith('image/'));
+  if (!item) return false;
+  event.preventDefault();
+  const target = explicitTarget || event.target.closest?.('[data-paste-target]')?.dataset?.pasteTarget || state.activePasteTarget || 'problem';
+  const file = item.getAsFile();
+  if (!file) return false;
+  const data = await fileToDataUrl(file);
+  setFormImage(target, data);
+  setPasteTarget(target);
+  showToast(target === 'problem' ? '문제 스샷을 붙여넣었어' : '해설 스샷을 붙여넣었어');
+  return true;
+}
+
+async function pasteImageWithClipboardApi(target) {
+  setPasteTarget(target);
+  if (!navigator.clipboard || !navigator.clipboard.read) {
+    showToast('이 브라우저는 버튼 붙여넣기를 지원하지 않아. 영역 클릭 후 Ctrl+V를 눌러줘.');
+    return;
+  }
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const type = item.types.find((t) => t.startsWith('image/'));
+      if (!type) continue;
+      const blob = await item.getType(type);
+      const data = await blobToDataUrl(blob);
+      setFormImage(target, data);
+      showToast(target === 'problem' ? '문제 스샷을 붙여넣었어' : '해설 스샷을 붙여넣었어');
+      return;
+    }
+    showToast('클립보드에 이미지가 없어');
+  } catch (err) {
+    showToast('붙여넣기 권한이 막혔어. 영역 클릭 후 Ctrl+V를 눌러줘.');
+  }
+}
+
 async function saveProblemFromForm(event) {
   event.preventDefault();
   const editingId = els.editingId.value;
   const existing = editingId ? state.problems.find((p) => p.id === editingId) : null;
-  const file = els.imageInput.files[0];
-  if (!existing && !file) {
+
+  let imageData = state.formProblemImageData || existing?.imageData || '';
+  if (!imageData && els.imageInput.files[0]) imageData = await fileToDataUrl(els.imageInput.files[0]);
+
+  let explanationImageData = state.formExplanationImageData || existing?.explanationImageData || '';
+  if (!explanationImageData && els.explanationImageInput.files[0]) {
+    explanationImageData = await fileToDataUrl(els.explanationImageInput.files[0]);
+  }
+
+  if (!existing && !imageData) {
     showToast('문제 이미지를 올려줘');
     return;
   }
-  let imageData = existing?.imageData || '';
-  if (file) imageData = await fileToDataUrl(file);
+  if (!imageData) {
+    showToast('문제 이미지를 올려줘');
+    return;
+  }
+
   const now = Date.now();
   const problem = {
     id: existing?.id || uid(),
@@ -793,6 +932,7 @@ async function saveProblemFromForm(event) {
     difficulty: els.difficultyInput.value,
     imageData,
     explanation: els.explanationInput.value.trim(),
+    explanationImageData,
     tags: tagsToArray(els.tagsInput.value),
     createdAt: existing?.createdAt || now,
     updatedAt: now,
@@ -815,20 +955,12 @@ async function saveProblemFromForm(event) {
   switchView('solveView');
 }
 
-async function previewSelectedImage() {
-  const file = els.imageInput.files[0];
-  if (!file) return;
-  const data = await fileToDataUrl(file);
-  els.previewImage.src = data;
-  els.previewImage.classList.remove('hidden');
-}
-
 async function exportData() {
   const problems = await getAll(STORES.problems);
   const history = await getAll(STORES.history);
   const payload = {
     app: 'PSAT 랜덤 오답노트',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     problems,
     history
@@ -940,7 +1072,24 @@ function bindEvents() {
 
   els.problemForm.addEventListener('submit', saveProblemFromForm);
   els.resetFormBtn.addEventListener('click', resetForm);
-  els.imageInput.addEventListener('change', previewSelectedImage);
+  els.imageInput.addEventListener('change', () => imageFileInputChanged('problem', els.imageInput));
+  els.explanationImageInput.addEventListener('change', () => imageFileInputChanged('explanation', els.explanationImageInput));
+  els.problemPasteZone.addEventListener('click', () => setPasteTarget('problem'));
+  els.problemPasteZone.addEventListener('focus', () => setPasteTarget('problem'));
+  els.explanationPasteZone.addEventListener('click', () => setPasteTarget('explanation'));
+  els.explanationPasteZone.addEventListener('focus', () => setPasteTarget('explanation'));
+  els.problemPasteZone.addEventListener('paste', (event) => pasteImageFromClipboardEvent(event, 'problem'));
+  els.explanationPasteZone.addEventListener('paste', (event) => pasteImageFromClipboardEvent(event, 'explanation'));
+  els.pasteProblemBtn.addEventListener('click', () => pasteImageWithClipboardApi('problem'));
+  els.pasteExplanationBtn.addEventListener('click', () => pasteImageWithClipboardApi('explanation'));
+  els.clearProblemImageBtn.addEventListener('click', () => clearFormImage('problem'));
+  els.clearExplanationImageBtn.addEventListener('click', () => clearFormImage('explanation'));
+  document.addEventListener('paste', async (event) => {
+    if (event.defaultPrevented) return;
+    if (!document.getElementById('addView').classList.contains('active')) return;
+    await pasteImageFromClipboardEvent(event);
+  });
+
   els.searchInput.addEventListener('input', renderProblemList);
   els.listSubjectFilter.addEventListener('change', renderProblemList);
   els.exportBtn.addEventListener('click', exportData);

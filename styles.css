@@ -181,6 +181,7 @@ textarea { resize: vertical; }
   margin-top: 12px;
 }
 .wrap { flex-wrap: wrap; }
+.small-gap { gap: 8px; }
 .hint {
   color: var(--muted);
   font-size: 13px;
@@ -320,6 +321,19 @@ textarea { resize: vertical; }
   line-height: 1.6;
 }
 
+.explanation img, .explanation-image {
+  display: block;
+  width: min(640px, 100%);
+  max-width: 100%;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #fff;
+  margin-bottom: 12px;
+}
+.explanation-text {
+  white-space: pre-wrap;
+}
+
 .list {
   display: grid;
   gap: 10px;
@@ -430,4 +444,40 @@ textarea { resize: vertical; }
   .tabs { background: rgba(255,255,255,.92); }
   .timer-box, .explanation { background: #f8fafc; }
   .card { background: rgba(255,255,255,.96); }
+}
+
+.small-gap { gap: 8px; margin-top: 8px; }
+.paste-card {
+  margin: 14px 0 10px;
+  padding: 16px;
+  border: 2px dashed var(--line);
+  border-radius: 16px;
+  background: rgba(255,255,255,.05);
+  color: var(--muted);
+  display: grid;
+  gap: 5px;
+  cursor: pointer;
+  outline: 0;
+}
+.paste-card strong {
+  color: var(--text);
+  font-size: 15px;
+}
+.paste-card:focus,
+.paste-card.active-paste {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(125,211,252,.12);
+  background: rgba(125,211,252,.08);
+}
+.explanation-image {
+  display: block;
+  width: min(100%, 900px);
+  height: auto;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: #fff;
+  margin: 0 0 12px;
+}
+.explanation-text {
+  white-space: pre-wrap;
 }

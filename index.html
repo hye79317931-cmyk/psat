@@ -145,14 +145,35 @@
             </label>
           </div>
 
-          <label>문제 이미지
+          <div class="paste-card active-paste" id="problemPasteZone" data-paste-target="problem" tabindex="0" role="button" aria-label="문제 스크린샷 붙여넣기 영역">
+            <strong>문제 스크린샷</strong>
+            <span>여기를 클릭하고 Ctrl+V 하면 문제 이미지로 들어갑니다.</span>
+          </div>
+          <label>문제 이미지 파일로 선택
             <input id="imageInput" type="file" accept="image/*" />
           </label>
-          <p class="hint">사진은 폰 내부 IndexedDB에 저장됩니다. 많은 문제를 넣을 거면 주기적으로 백업 파일을 만들어둬.</p>
-          <img id="previewImage" class="preview hidden" alt="미리보기" />
+          <div class="row wrap small-gap">
+            <button id="pasteProblemBtn" class="secondary" type="button">문제 스샷 붙여넣기</button>
+            <button id="clearProblemImageBtn" class="secondary" type="button">문제 이미지 비우기</button>
+          </div>
+          <p class="hint">PC에서는 캡처 후 Ctrl+V가 제일 빠릅니다. 모바일은 브라우저 제한 때문에 파일 선택 방식이 더 안정적입니다.</p>
+          <img id="previewImage" class="preview hidden" alt="문제 이미지 미리보기" />
 
-          <label>해설
-            <textarea id="explanationInput" rows="5" placeholder="정답 근거, 빠른 풀이 포인트, 함정 선지 등을 적어둬."></textarea>
+          <div class="paste-card" id="explanationPasteZone" data-paste-target="explanation" tabindex="0" role="button" aria-label="해설 스크린샷 붙여넣기 영역">
+            <strong>해설 스크린샷</strong>
+            <span>여기를 클릭하고 Ctrl+V 하면 해설 이미지로 들어갑니다.</span>
+          </div>
+          <label>해설 이미지 파일로 선택
+            <input id="explanationImageInput" type="file" accept="image/*" />
+          </label>
+          <div class="row wrap small-gap">
+            <button id="pasteExplanationBtn" class="secondary" type="button">해설 스샷 붙여넣기</button>
+            <button id="clearExplanationImageBtn" class="secondary" type="button">해설 이미지 비우기</button>
+          </div>
+          <img id="previewExplanationImage" class="preview hidden" alt="해설 이미지 미리보기" />
+
+          <label>해설 텍스트
+            <textarea id="explanationInput" rows="5" placeholder="해설 이미지만 저장해도 되고, 필요한 메모를 추가로 적어도 됩니다."></textarea>
           </label>
           <label>태그
             <input id="tagsInput" type="text" placeholder="예: 조선왕조실록, 추론, 고난도" />
