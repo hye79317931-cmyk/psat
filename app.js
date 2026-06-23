@@ -5,6 +5,10 @@ const DB_VERSION = 1;
 const STORES = { problems: 'problems', history: 'history' };
 const SLOW_MS = 180000;
 const WRONG_CLEAR_STREAK = 2;
+const SYNC_CONFIG_KEY = 'psat-github-sync-v1';
+const SYNC_TOMBSTONES_KEY = 'psat-github-sync-tombstones-v1';
+const SYNC_DEBOUNCE_MS = 2500;
+const SYNC_INTERVAL_MS = 30000;
 
 const $ = (id) => document.getElementById(id);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -31,10 +35,12 @@ const els = {
   imageWrap: $('imageWrap'),
   problemImage: $('problemImage'),
   inkCanvas: $('inkCanvas'),
-  drawToggle: $('drawToggle'),
   penBtn: $('penBtn'),
   eraserBtn: $('eraserBtn'),
   penSize: $('penSize'),
+  penSizeLabel: $('penSizeLabel'),
+  eraserSize: $('eraserSize'),
+  eraserSizeLabel: $('eraserSizeLabel'),
   clearInkBtn: $('clearInkBtn'),
   zoomOutBtn: $('zoomOutBtn'),
   zoomInBtn: $('zoomInBtn'),
@@ -77,7 +83,18 @@ const els = {
   statsCards: $('statsCards'),
   exportBtn: $('exportBtn'),
   importInput: $('importInput'),
-  wipeBtn: $('wipeBtn')
+  wipeBtn: $('wipeBtn'),
+
+  syncStatus: $('syncStatus'),
+  syncOwnerInput: $('syncOwnerInput'),
+  syncRepoInput: $('syncRepoInput'),
+  syncBranchInput: $('syncBranchInput'),
+  syncPathInput: $('syncPathInput'),
+  syncTokenInput: $('syncTokenInput'),
+  saveSyncBtn: $('saveSyncBtn'),
+  manualSyncBtn: $('manualSyncBtn'),
+  pullSyncBtn: $('pullSyncBtn'),
+  disableSyncBtn: $('disableSyncBtn')
 };
 
 const state = {
@@ -90,17 +107,36 @@ const state = {
   session: null,
   questionStart: 0,
   timerId: null,
-  drawEnabled: false,
   drawTool: 'pen',
   drawing: false,
+  activeDrawPointerId: null,
   currentStroke: null,
+  touchPointers: new Map(),
+  gesture: null,
   zoom: 1,
   db: null,
   deferredInstallPrompt: null,
   activePasteTarget: 'problem',
   formProblemImageData: '',
-  formExplanationImageData: ''
+  formExplanationImageData: '',
+  syncConfig: null,
+  syncTimer: null,
+  syncDebounceTimer: null,
+  syncRunning: false,
+  syncApplying: false,
+  tombstones: {},
+  deviceId: localStorage.getItem('psat-device-id') || ''
 };
+
+if (!state.deviceId) {
+  state.deviceId = uidSafe();
+  localStorage.setItem('psat-device-id', state.deviceId);
+}
+
+function uidSafe() {
+  if (globalThis.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return `device-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 function openDb() {
   if (state.db) return Promise.resolve(state.db);
@@ -150,15 +186,30 @@ async function getAll(storeName) {
 }
 
 async function put(storeName, value) {
-  return tx(storeName, 'readwrite', (store) => store.put(value));
+  const result = await tx(storeName, 'readwrite', (store) => store.put(value));
+  scheduleSyncForLocalChange(storeName);
+  return result;
 }
 
 async function remove(storeName, id) {
-  return tx(storeName, 'readwrite', (store) => store.delete(id));
+  if (storeName === STORES.problems) recordTombstone(id);
+  const result = await tx(storeName, 'readwrite', (store) => store.delete(id));
+  scheduleSyncForLocalChange(storeName);
+  return result;
 }
 
 async function clearStore(storeName) {
-  return tx(storeName, 'readwrite', (store) => store.clear());
+  if (storeName === STORES.problems) {
+    try {
+      const existing = await getAll(STORES.problems);
+      existing.forEach((p) => recordTombstone(p.id));
+    } catch (err) {
+      console.warn('tombstone record failed', err);
+    }
+  }
+  const result = await tx(storeName, 'readwrite', (store) => store.clear());
+  scheduleSyncForLocalChange(storeName);
+  return result;
 }
 
 function uid() {
@@ -319,7 +370,7 @@ function loadCurrentProblem(problem) {
   state.selectedAnswer = null;
   state.checked = false;
   state.questionStart = Date.now();
-  state.drawEnabled = false;
+  resetGestureState();
   state.drawTool = 'pen';
   state.zoom = 1;
   localStorage.setItem('psat-last-problem-id', problem.id);
@@ -335,7 +386,6 @@ function loadCurrentProblem(problem) {
   els.problemMeta.textContent = `${problem.subject || '미분류'} · ${problem.category || '분류없음'} · 난이도 ${problem.difficulty || '중'} · 정답률 ${accuracy(problem)}% · ${avg}${tags}`;
   els.problemImage.src = problem.imageData;
   els.flagBtn.textContent = problem.flagged ? '다시보기 해제' : '다시보기 지정';
-  setDrawEnabled(false);
   setDrawTool('pen');
   setZoom(1);
   clearChoiceState();
@@ -498,23 +548,45 @@ function finishSession(timeout) {
 }
 
 function setDrawEnabled(enabled) {
-  state.drawEnabled = enabled;
-  els.inkCanvas.classList.toggle('drawing-enabled', enabled);
-  els.drawToggle.textContent = enabled ? '필기모드 ON' : '필기모드 OFF';
-  els.drawToggle.classList.toggle('active-tool', enabled);
+  // v4: 필기모드 토글 제거. 스타일러스/마우스는 항상 필기, 손가락은 이동/확대입니다.
+  els.inkCanvas.classList.add('drawing-enabled');
+}
+
+function updateSizeLabels() {
+  if (els.penSizeLabel) els.penSizeLabel.textContent = String(Number(els.penSize.value || 4));
+  if (els.eraserSizeLabel) els.eraserSizeLabel.textContent = String(Number(els.eraserSize.value || 26));
 }
 
 function setDrawTool(tool) {
   state.drawTool = tool;
   els.penBtn.classList.toggle('active-tool', tool === 'pen');
   els.eraserBtn.classList.toggle('active-tool', tool === 'eraser');
+  updateSizeLabels();
 }
 
 function setZoom(value) {
-  state.zoom = Math.min(2.5, Math.max(1, Number(value)));
+  state.zoom = Math.min(5, Math.max(0.75, Number(value)));
   els.imageWrap.style.width = `${state.zoom * 100}%`;
   els.zoomLabel.textContent = `${Math.round(state.zoom * 100)}%`;
   window.requestAnimationFrame(syncCanvasSize);
+}
+
+function setZoomAround(value, clientX, clientY, fixedContentX = null, fixedContentY = null) {
+  const scroller = els.imageScroller;
+  const rect = scroller.getBoundingClientRect();
+  const viewX = Math.min(rect.width, Math.max(0, clientX - rect.left));
+  const viewY = Math.min(rect.height, Math.max(0, clientY - rect.top));
+  const oldZoom = state.zoom || 1;
+  const contentX = fixedContentX ?? ((scroller.scrollLeft + viewX) / oldZoom);
+  const contentY = fixedContentY ?? ((scroller.scrollTop + viewY) / oldZoom);
+  setZoom(value);
+  scroller.scrollLeft = Math.max(0, contentX * state.zoom - viewX);
+  scroller.scrollTop = Math.max(0, contentY * state.zoom - viewY);
+}
+
+function zoomFromCenter(delta) {
+  const rect = els.imageScroller.getBoundingClientRect();
+  setZoomAround(state.zoom + delta, rect.left + rect.width / 2, rect.top + rect.height / 2);
 }
 
 function getCanvasContext() {
@@ -557,7 +629,9 @@ function drawStroke(ctx, stroke, width, height) {
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.lineWidth = stroke.size || 4;
+  const baseSize = Number(stroke.size || 4);
+  const strokeZoom = Number(stroke.zoom || 1);
+  ctx.lineWidth = Math.max(1, baseSize * ((state.zoom || 1) / strokeZoom));
   ctx.strokeStyle = stroke.color || '#111111';
   ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
   ctx.beginPath();
@@ -575,30 +649,68 @@ function drawStroke(ctx, stroke, width, height) {
   ctx.restore();
 }
 
-function pointerToPoint(event) {
+function clientToPoint(clientX, clientY) {
   const rect = els.inkCanvas.getBoundingClientRect();
-  const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-  const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+  const x = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  const y = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
+  return { x, y };
+}
+
+function pointerToPoint(event) {
+  const point = clientToPoint(event.clientX, event.clientY);
   const pressure = event.pressure && event.pressure > 0 ? event.pressure : 0.5;
-  return { x, y, pressure };
+  return { ...point, pressure };
+}
+
+function resetGestureState() {
+  if (state.drawing && state.currentStroke) {
+    state.currentStroke = null;
+  }
+  state.drawing = false;
+  state.activeDrawPointerId = null;
+  state.touchPointers = new Map();
+  state.gesture = null;
+  els.imageScroller?.classList.remove('panning');
+}
+
+function canDrawWithPointer(event) {
+  if (!state.current) return false;
+  if (event.pointerType === 'touch') return false;
+  if (event.pointerType === 'mouse' && event.button !== 0 && event.buttons !== 1) return false;
+  return event.pointerType === 'pen' || event.pointerType === 'mouse' || event.pointerType === '' || !event.pointerType;
+}
+
+function currentStrokeSize() {
+  if (state.drawTool === 'eraser') return Number(els.eraserSize.value || 26);
+  return Number(els.penSize.value || 4);
 }
 
 function startInk(event) {
-  if (!state.current || !state.drawEnabled) return;
+  if (event.pointerType === 'touch') {
+    startTouchGesture(event);
+    return;
+  }
+  if (!canDrawWithPointer(event)) return;
   event.preventDefault();
-  els.inkCanvas.setPointerCapture(event.pointerId);
+  els.inkCanvas.setPointerCapture?.(event.pointerId);
   state.drawing = true;
+  state.activeDrawPointerId = event.pointerId;
   state.currentStroke = {
     tool: state.drawTool,
     color: '#111111',
-    size: Number(els.penSize.value || 4),
+    size: currentStrokeSize(),
+    zoom: state.zoom || 1,
     points: [pointerToPoint(event)],
     createdAt: Date.now()
   };
 }
 
 function moveInk(event) {
-  if (!state.drawing || !state.currentStroke) return;
+  if (event.pointerType === 'touch') {
+    moveTouchGesture(event);
+    return;
+  }
+  if (!state.drawing || !state.currentStroke || event.pointerId !== state.activeDrawPointerId) return;
   event.preventDefault();
   state.currentStroke.points.push(pointerToPoint(event));
   redrawInk();
@@ -607,14 +719,106 @@ function moveInk(event) {
 }
 
 async function endInk(event) {
-  if (!state.drawing || !state.currentStroke) return;
+  if (event.pointerType === 'touch') {
+    endTouchGesture(event);
+    return;
+  }
+  if (!state.drawing || !state.currentStroke || event.pointerId !== state.activeDrawPointerId) return;
   event.preventDefault();
   state.drawing = false;
+  state.activeDrawPointerId = null;
+  try { els.inkCanvas.releasePointerCapture?.(event.pointerId); } catch (err) {}
   state.current.annotations = state.current.annotations || [];
   state.current.annotations.push(state.currentStroke);
   state.currentStroke = null;
   redrawInk();
   await saveInkToCurrentProblem(true);
+}
+
+function touchList() {
+  return Array.from(state.touchPointers.values());
+}
+
+function distance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y) || 1;
+}
+
+function centerOf(a, b) {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+function beginPanGesture(point) {
+  state.gesture = {
+    type: 'pan',
+    pointerId: point.id,
+    startX: point.x,
+    startY: point.y,
+    scrollLeft: els.imageScroller.scrollLeft,
+    scrollTop: els.imageScroller.scrollTop
+  };
+  els.imageScroller.classList.add('panning');
+}
+
+function beginPinchGesture(points) {
+  if (points.length < 2) return;
+  const [a, b] = points;
+  const c = centerOf(a, b);
+  const rect = els.imageScroller.getBoundingClientRect();
+  state.gesture = {
+    type: 'pinch',
+    startDistance: distance(a, b),
+    startZoom: state.zoom || 1,
+    contentX: (els.imageScroller.scrollLeft + (c.x - rect.left)) / (state.zoom || 1),
+    contentY: (els.imageScroller.scrollTop + (c.y - rect.top)) / (state.zoom || 1)
+  };
+  els.imageScroller.classList.add('panning');
+}
+
+function startTouchGesture(event) {
+  if (!state.current) return;
+  event.preventDefault();
+  els.inkCanvas.setPointerCapture?.(event.pointerId);
+  state.touchPointers.set(event.pointerId, { id: event.pointerId, x: event.clientX, y: event.clientY });
+  const points = touchList();
+  if (points.length >= 2) beginPinchGesture(points);
+  else beginPanGesture(points[0]);
+}
+
+function moveTouchGesture(event) {
+  if (!state.touchPointers.has(event.pointerId)) return;
+  event.preventDefault();
+  state.touchPointers.set(event.pointerId, { id: event.pointerId, x: event.clientX, y: event.clientY });
+  const points = touchList();
+  if (points.length >= 2) {
+    if (!state.gesture || state.gesture.type !== 'pinch') beginPinchGesture(points);
+    const [a, b] = points;
+    const c = centerOf(a, b);
+    const ratio = distance(a, b) / Math.max(1, state.gesture.startDistance || distance(a, b));
+    setZoomAround(state.gesture.startZoom * ratio, c.x, c.y, state.gesture.contentX, state.gesture.contentY);
+    return;
+  }
+  if (points.length === 1) {
+    const point = points[0];
+    if (!state.gesture || state.gesture.type !== 'pan' || state.gesture.pointerId !== point.id) beginPanGesture(point);
+    const dx = point.x - state.gesture.startX;
+    const dy = point.y - state.gesture.startY;
+    els.imageScroller.scrollLeft = state.gesture.scrollLeft - dx;
+    els.imageScroller.scrollTop = state.gesture.scrollTop - dy;
+  }
+}
+
+function endTouchGesture(event) {
+  if (!state.touchPointers.has(event.pointerId)) return;
+  event.preventDefault();
+  state.touchPointers.delete(event.pointerId);
+  try { els.inkCanvas.releasePointerCapture?.(event.pointerId); } catch (err) {}
+  const points = touchList();
+  if (points.length >= 2) beginPinchGesture(points);
+  else if (points.length === 1) beginPanGesture(points[0]);
+  else {
+    state.gesture = null;
+    els.imageScroller.classList.remove('panning');
+  }
 }
 
 async function saveInkToCurrentProblem(writeDb) {
@@ -819,39 +1023,16 @@ function editProblem(p) {
 }
 
 async function blobToDataUrl(blob) {
-  const rawDataUrl = await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
-  return compressImage(rawDataUrl);
 }
 
 async function fileToDataUrl(file) {
   return blobToDataUrl(file);
-}
-
-async function compressImage(dataUrl) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const maxSide = 2200;
-      const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
-      const width = Math.max(1, Math.round(img.naturalWidth * scale));
-      const height = Math.max(1, Math.round(img.naturalHeight * scale));
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, width, height);
-      ctx.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', 0.88));
-    };
-    img.onerror = () => resolve(dataUrl);
-    img.src = dataUrl;
-  });
 }
 
 async function imageFileInputChanged(target, input) {
@@ -1002,6 +1183,352 @@ async function importData(event) {
   showToast('복원 완료');
 }
 
+
+function guessGitHubDefaults() {
+  const host = location.hostname || '';
+  const pathRepo = (location.pathname || '').split('/').filter(Boolean)[0] || 'psat-data';
+  const owner = host.endsWith('.github.io') ? host.replace('.github.io', '') : '';
+  return { owner, repo: pathRepo === 'psat' ? 'psat-data' : pathRepo, branch: 'main', path: 'psat-sync-data.json' };
+}
+
+function loadTombstones() {
+  try {
+    const data = JSON.parse(localStorage.getItem(SYNC_TOMBSTONES_KEY) || '{}');
+    state.tombstones = data && typeof data === 'object' ? data : {};
+  } catch (err) {
+    state.tombstones = {};
+  }
+}
+
+function saveTombstones() {
+  localStorage.setItem(SYNC_TOMBSTONES_KEY, JSON.stringify(state.tombstones || {}));
+}
+
+function recordTombstone(id, at = Date.now()) {
+  if (!id || state.syncApplying) return;
+  state.tombstones = state.tombstones || {};
+  state.tombstones[id] = Math.max(Number(state.tombstones[id] || 0), Number(at || Date.now()));
+  saveTombstones();
+}
+
+function getSyncConfig() {
+  try {
+    const cfg = JSON.parse(localStorage.getItem(SYNC_CONFIG_KEY) || 'null');
+    if (cfg && typeof cfg === 'object') return cfg;
+  } catch (err) {}
+  return null;
+}
+
+function saveSyncConfig(cfg) {
+  state.syncConfig = cfg;
+  localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(cfg));
+}
+
+function clearSyncConfig() {
+  state.syncConfig = null;
+  localStorage.removeItem(SYNC_CONFIG_KEY);
+}
+
+function renderSyncSettings() {
+  const defaults = guessGitHubDefaults();
+  const cfg = state.syncConfig || getSyncConfig() || defaults;
+  if (!els.syncOwnerInput) return;
+  els.syncOwnerInput.value = cfg.owner || defaults.owner || '';
+  els.syncRepoInput.value = cfg.repo || defaults.repo || '';
+  els.syncBranchInput.value = cfg.branch || 'main';
+  els.syncPathInput.value = cfg.path || 'psat-sync-data.json';
+  if (cfg.token && !els.syncTokenInput.value) els.syncTokenInput.value = cfg.token;
+  updateSyncStatus();
+}
+
+function updateSyncStatus(text = '') {
+  if (!els.syncStatus) return;
+  const cfg = state.syncConfig || getSyncConfig();
+  const enabled = !!(cfg && cfg.enabled);
+  const last = cfg?.lastSyncAt ? ` · 마지막 ${new Date(cfg.lastSyncAt).toLocaleString()}` : '';
+  const base = enabled ? '자동 동기화 켜짐' : '동기화 꺼짐';
+  els.syncStatus.textContent = text || `${base}${last}`;
+  els.syncStatus.classList.toggle('sync-on', enabled);
+}
+
+function readSyncForm() {
+  return {
+    enabled: true,
+    owner: els.syncOwnerInput.value.trim(),
+    repo: els.syncRepoInput.value.trim(),
+    branch: els.syncBranchInput.value.trim() || 'main',
+    path: els.syncPathInput.value.trim() || 'psat-sync-data.json',
+    token: els.syncTokenInput.value.trim(),
+    lastSyncAt: state.syncConfig?.lastSyncAt || 0
+  };
+}
+
+function validateSyncConfig(cfg) {
+  if (!cfg.owner || !cfg.repo || !cfg.branch || !cfg.path || !cfg.token) {
+    showToast('동기화 설정을 모두 입력해줘');
+    return false;
+  }
+  return true;
+}
+
+function startAutoSync() {
+  stopAutoSync();
+  const cfg = state.syncConfig || getSyncConfig();
+  if (!cfg?.enabled) return;
+  state.syncTimer = setInterval(() => syncNow(false), SYNC_INTERVAL_MS);
+}
+
+function stopAutoSync() {
+  if (state.syncTimer) clearInterval(state.syncTimer);
+  state.syncTimer = null;
+}
+
+function scheduleSyncForLocalChange(storeName) {
+  // v4: 자동 동기화 기능 제거. 데이터는 기기별 저장 + JSON 백업/복원 방식으로 유지합니다.
+  return;
+}
+
+function dataTimestamp(payload) {
+  let max = 0;
+  for (const p of payload.problems || []) {
+    max = Math.max(max, Number(p.updatedAt || p.createdAt || 0));
+  }
+  for (const h of payload.history || []) {
+    max = Math.max(max, Number(h.createdAt || 0));
+  }
+  for (const value of Object.values(payload.tombstones || {})) {
+    max = Math.max(max, Number(value || 0));
+  }
+  return max;
+}
+
+async function buildSyncPayload() {
+  const problems = await getAll(STORES.problems);
+  const history = await getAll(STORES.history);
+  loadTombstones();
+  const payload = {
+    app: 'PSAT 랜덤 오답노트',
+    version: 3,
+    contentUpdatedAt: 0,
+    syncedAt: new Date().toISOString(),
+    deviceId: state.deviceId,
+    problems,
+    history,
+    tombstones: state.tombstones || {}
+  };
+  payload.contentUpdatedAt = dataTimestamp(payload);
+  return payload;
+}
+
+function utf8ToBase64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function base64ToUtf8(base64) {
+  const clean = String(base64 || '').replace(/\s/g, '');
+  const binary = atob(clean);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+function githubContentsUrl(cfg) {
+  const path = String(cfg.path || '').split('/').map(encodeURIComponent).join('/');
+  return `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/${path}`;
+}
+
+async function fetchRemotePayload(cfg) {
+  const url = `${githubContentsUrl(cfg)}?ref=${encodeURIComponent(cfg.branch)}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${cfg.token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    }
+  });
+  if (res.status === 404) return { sha: '', payload: null };
+  if (!res.ok) throw new Error(`GitHub 가져오기 실패: ${res.status}`);
+  const data = await res.json();
+  const text = base64ToUtf8(data.content || '');
+  let payload = null;
+  try {
+    payload = JSON.parse(text);
+  } catch (err) {
+    throw new Error('동기화 파일 JSON을 읽지 못했어');
+  }
+  return { sha: data.sha || '', payload };
+}
+
+async function putRemotePayload(cfg, payload, sha = '') {
+  const body = {
+    message: `PSAT sync ${new Date().toISOString()}`,
+    content: utf8ToBase64(JSON.stringify(payload)),
+    branch: cfg.branch
+  };
+  if (sha) body.sha = sha;
+  const res = await fetch(githubContentsUrl(cfg), {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${cfg.token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`GitHub 저장 실패: ${res.status} ${detail.slice(0, 120)}`);
+  }
+  return res.json();
+}
+
+async function applyRemotePayload(remotePayload) {
+  if (!remotePayload) return false;
+  let changed = false;
+  state.syncApplying = true;
+  try {
+    loadTombstones();
+    const remoteTombstones = remotePayload.tombstones || {};
+    for (const [id, at] of Object.entries(remoteTombstones)) {
+      state.tombstones[id] = Math.max(Number(state.tombstones[id] || 0), Number(at || 0));
+    }
+    saveTombstones();
+
+    const localProblems = await getAll(STORES.problems);
+    const localById = new Map(localProblems.map((p) => [p.id, p]));
+
+    for (const local of localProblems) {
+      const deletedAt = Number(state.tombstones[local.id] || 0);
+      const updatedAt = Number(local.updatedAt || local.createdAt || 0);
+      if (deletedAt && deletedAt >= updatedAt) {
+        await tx(STORES.problems, 'readwrite', (store) => store.delete(local.id));
+        changed = true;
+      }
+    }
+
+    for (const remote of remotePayload.problems || []) {
+      if (!remote?.id) continue;
+      const deletedAt = Number(state.tombstones[remote.id] || 0);
+      const remoteUpdated = Number(remote.updatedAt || remote.createdAt || 0);
+      if (deletedAt && deletedAt >= remoteUpdated) continue;
+      const local = localById.get(remote.id);
+      const localUpdated = Number(local?.updatedAt || local?.createdAt || 0);
+      if (!local || remoteUpdated > localUpdated) {
+        await tx(STORES.problems, 'readwrite', (store) => store.put(remote));
+        changed = true;
+      }
+    }
+
+    const localHistory = await getAll(STORES.history);
+    const localHistoryIds = new Set(localHistory.map((h) => h.id));
+    for (const remoteHistory of remotePayload.history || []) {
+      if (!remoteHistory?.id || localHistoryIds.has(remoteHistory.id)) continue;
+      await tx(STORES.history, 'readwrite', (store) => store.put(remoteHistory));
+      changed = true;
+    }
+  } finally {
+    state.syncApplying = false;
+  }
+  if (changed) await refresh();
+  return changed;
+}
+
+async function syncNow(manual = false) {
+  const cfg = state.syncConfig || getSyncConfig();
+  if (!cfg?.enabled) {
+    if (manual) showToast('동기화가 꺼져 있어');
+    return;
+  }
+  if (state.syncRunning) return;
+  if (!navigator.onLine) {
+    updateSyncStatus('오프라인이라 동기화 대기 중');
+    return;
+  }
+  state.syncRunning = true;
+  updateSyncStatus('동기화 중...');
+  try {
+    const remote = await fetchRemotePayload(cfg);
+    const remoteContentAt = Number(remote.payload?.contentUpdatedAt || dataTimestamp(remote.payload || {}) || 0);
+    await applyRemotePayload(remote.payload);
+    const localPayload = await buildSyncPayload();
+    if (!remote.payload || Number(localPayload.contentUpdatedAt || 0) > remoteContentAt) {
+      try {
+        await putRemotePayload(cfg, localPayload, remote.sha);
+      } catch (err) {
+        if (String(err.message || '').includes('409')) {
+          const retry = await fetchRemotePayload(cfg);
+          await applyRemotePayload(retry.payload);
+          const retryPayload = await buildSyncPayload();
+          await putRemotePayload(cfg, retryPayload, retry.sha);
+        } else {
+          throw err;
+        }
+      }
+    }
+    cfg.lastSyncAt = Date.now();
+    saveSyncConfig(cfg);
+    renderSyncSettings();
+    updateSyncStatus('동기화 완료 · ' + new Date(cfg.lastSyncAt).toLocaleString());
+    if (manual) showToast('동기화 완료');
+  } catch (err) {
+    console.error(err);
+    updateSyncStatus('동기화 오류: ' + (err.message || err));
+    if (manual) showToast('동기화 실패. 설정/토큰을 확인해줘.');
+  } finally {
+    state.syncRunning = false;
+  }
+}
+
+async function pullOnlySync() {
+  const cfg = state.syncConfig || getSyncConfig();
+  if (!cfg?.enabled) {
+    showToast('동기화 설정을 먼저 저장해줘');
+    return;
+  }
+  if (state.syncRunning) return;
+  state.syncRunning = true;
+  updateSyncStatus('가져오는 중...');
+  try {
+    const remote = await fetchRemotePayload(cfg);
+    await applyRemotePayload(remote.payload);
+    cfg.lastSyncAt = Date.now();
+    saveSyncConfig(cfg);
+    renderSyncSettings();
+    showToast('가져오기 완료');
+  } catch (err) {
+    console.error(err);
+    showToast('가져오기 실패. 설정/토큰을 확인해줘.');
+    updateSyncStatus('가져오기 오류: ' + (err.message || err));
+  } finally {
+    state.syncRunning = false;
+  }
+}
+
+async function enableSyncFromForm() {
+  const cfg = readSyncForm();
+  if (!validateSyncConfig(cfg)) return;
+  saveSyncConfig(cfg);
+  renderSyncSettings();
+  startAutoSync();
+  await syncNow(true);
+}
+
+function disableSync() {
+  stopAutoSync();
+  clearTimeout(state.syncDebounceTimer);
+  clearSyncConfig();
+  if (els.syncTokenInput) els.syncTokenInput.value = '';
+  renderSyncSettings();
+  showToast('동기화를 껐어');
+}
+
 async function wipeAll() {
   if (!confirm('전체 문제, 오답, 필기, 풀이 기록을 모두 삭제할까?')) return;
   if (!confirm('정말 삭제할까? 백업이 없으면 복구할 수 없어.')) return;
@@ -1054,12 +1581,13 @@ function bindEvents() {
   els.flagBtn.addEventListener('click', toggleFlag);
   els.nextBtn.addEventListener('click', nextProblem);
 
-  els.drawToggle.addEventListener('click', () => setDrawEnabled(!state.drawEnabled));
   els.penBtn.addEventListener('click', () => setDrawTool('pen'));
   els.eraserBtn.addEventListener('click', () => setDrawTool('eraser'));
   els.clearInkBtn.addEventListener('click', clearInk);
-  els.zoomOutBtn.addEventListener('click', () => setZoom(state.zoom - 0.25));
-  els.zoomInBtn.addEventListener('click', () => setZoom(state.zoom + 0.25));
+  els.penSize.addEventListener('input', updateSizeLabels);
+  els.eraserSize.addEventListener('input', updateSizeLabels);
+  els.zoomOutBtn.addEventListener('click', () => zoomFromCenter(-0.25));
+  els.zoomInBtn.addEventListener('click', () => zoomFromCenter(0.25));
   els.problemImage.addEventListener('load', () => window.requestAnimationFrame(syncCanvasSize));
   window.addEventListener('resize', () => window.requestAnimationFrame(syncCanvasSize));
   els.inkCanvas.addEventListener('pointerdown', startInk);
@@ -1095,6 +1623,10 @@ function bindEvents() {
   els.exportBtn.addEventListener('click', exportData);
   els.importInput.addEventListener('change', importData);
   els.wipeBtn.addEventListener('click', wipeAll);
+  if (els.saveSyncBtn) els.saveSyncBtn.addEventListener('click', enableSyncFromForm);
+  if (els.manualSyncBtn) els.manualSyncBtn.addEventListener('click', () => syncNow(true));
+  if (els.pullSyncBtn) els.pullSyncBtn.addEventListener('click', pullOnlySync);
+  if (els.disableSyncBtn) els.disableSyncBtn.addEventListener('click', disableSync);
 
   window.addEventListener('beforeinstallprompt', (event) => {
     event.preventDefault();
@@ -1123,6 +1655,9 @@ async function registerServiceWorker() {
 async function init() {
   bindEvents();
   resetForm();
+  updateSizeLabels();
+  setDrawEnabled(true);
+  localStorage.removeItem(SYNC_CONFIG_KEY);
   await openDb();
   await refresh();
   await registerServiceWorker();

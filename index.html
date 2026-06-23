@@ -13,7 +13,7 @@
   <header class="app-header">
     <div>
       <h1>PSAT 랜덤 오답노트</h1>
-      <p>이미지 문제 · 정답체크 · 해설 · 랜덤 · 오답 · 시간 · 스타일러스 필기</p>
+      <p>이미지 문제 · 정답체크 · 해설 · 랜덤 · 오답 · 시간 · 손 이동/확대 · 스타일러스 필기</p>
     </div>
     <button id="installBtn" class="ghost hidden" type="button">홈화면 설치</button>
   </header>
@@ -75,17 +75,22 @@
           </div>
         </div>
 
-        <div class="toolbar">
-          <button id="drawToggle" class="secondary" type="button">필기모드 OFF</button>
+        <div class="toolbar note-toolbar">
           <button id="penBtn" class="secondary active-tool" type="button">펜</button>
           <button id="eraserBtn" class="secondary" type="button">지우개</button>
-          <label class="compact">굵기
-            <input id="penSize" type="range" min="1" max="20" value="4" />
+          <label class="compact range-control">펜 크기
+            <input id="penSize" type="range" min="1" max="24" value="4" />
+            <span id="penSizeLabel" class="badge small-badge">4</span>
+          </label>
+          <label class="compact range-control">지우개 크기
+            <input id="eraserSize" type="range" min="6" max="80" value="26" />
+            <span id="eraserSizeLabel" class="badge small-badge">26</span>
           </label>
           <button id="clearInkBtn" class="danger-lite" type="button">필기 지우기</button>
           <button id="zoomOutBtn" class="secondary" type="button">−</button>
           <span id="zoomLabel" class="badge">100%</span>
           <button id="zoomInBtn" class="secondary" type="button">＋</button>
+          <span class="tool-help">손가락: 이동/확대 · 스타일러스/마우스: 필기</span>
         </div>
 
         <div id="imageScroller" class="image-scroller">
