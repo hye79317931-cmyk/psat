@@ -1398,7 +1398,7 @@ body.reorder-active * {
 }
 
 
-/* v22: 정답 지정 버튼 아래에 현재 정답 확인 항목 배치 */
+/* v23: 정답 지정 버튼 아래에 현재 정답 확인 항목 배치 */
 .answer-assign-title {
   margin: 0 0 8px;
   color: var(--text);
@@ -1410,4 +1410,70 @@ body.reorder-active * {
 }
 .answer-assign-card label {
   margin-top: 8px;
+}
+
+
+.review-mode-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+.review-list-title {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(125, 211, 252, .12);
+  border: 1px solid rgba(125, 211, 252, .26);
+  color: var(--accent);
+  font-weight: 900;
+  margin: 12px 0 10px;
+}
+.review-time-detail {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,.06);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.review-time-detail strong {
+  color: var(--text);
+}
+.item.review-item {
+  cursor: pointer;
+}
+@media (max-width: 560px) {
+  .review-mode-buttons { grid-template-columns: 1fr; }
+}
+
+/* v24: 복습 풀이시간 비교 */
+.review-time-detail button {
+  width: 100%;
+  margin-top: 6px;
+  min-height: 38px;
+}
+.review-compare-box {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  background: rgba(125, 211, 252, .12);
+  border: 1px solid rgba(125, 211, 252, .28);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.review-compare-box strong:first-child {
+  color: var(--accent);
+}
+.review-compare-box span strong {
+  color: var(--text);
 }

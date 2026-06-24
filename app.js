@@ -91,7 +91,10 @@ const els = {
   tagsInput: $('tagsInput'),
   resetFormBtn: $('resetFormBtn'),
 
-  solveWrongBtn: $('solveWrongBtn'),
+  reviewWrongBtn: $('reviewWrongBtn'),
+  reviewWrongRandomBtn: $('reviewWrongRandomBtn'),
+  reviewCorrectBtn: $('reviewCorrectBtn'),
+  reviewListTitle: $('reviewListTitle'),
   clearSolvedWrongBtn: $('clearSolvedWrongBtn'),
   wrongList: $('wrongList'),
   searchInput: $('searchInput'),
@@ -129,6 +132,8 @@ const state = {
   queueIndex: 0,
   session: null,
   lastSession: null,
+  reviewMode: 'wrong',
+  reviewBaseline: null,
   autoNextTimer: null,
   questionStart: 0,
   timerId: null,
@@ -329,6 +334,39 @@ function averageTime(problem) {
 
 function accuracy(problem) {
   return problem.attempts ? Math.round(((problem.correct || 0) / problem.attempts) * 100) : 0;
+}
+
+
+function reviewBaselineFor(problem, label = '복습') {
+  return {
+    problemId: problem.id,
+    label,
+    previousLastTimeMs: problem.lastTimeMs || 0,
+    previousAvgTimeMs: averageTime(problem),
+    previousAttempts: problem.attempts || 0,
+    previousResult: problem.lastResult || ''
+  };
+}
+
+function formatTimeDelta(currentMs, previousMs) {
+  if (!previousMs) return '비교할 이전 풀이기록 없음';
+  const diff = currentMs - previousMs;
+  if (Math.abs(diff) < 1000) return '이전 최근 풀이와 거의 같음';
+  const direction = diff < 0 ? '단축' : '증가';
+  return `${formatLongTime(Math.abs(diff))} ${direction}`;
+}
+
+function comparisonHtml(currentMs, baseline) {
+  if (!baseline || baseline.problemId !== state.current?.id) return '';
+  const previousLast = baseline.previousLastTimeMs || 0;
+  const previousAvg = baseline.previousAvgTimeMs || 0;
+  const rows = [
+    `<span>이번 풀이: <strong>${formatLongTime(currentMs)}</strong></span>`,
+    `<span>이전 최근 풀이: <strong>${previousLast ? formatLongTime(previousLast) : '기록 없음'}</strong></span>`,
+    `<span>이전 평균 풀이: <strong>${previousAvg ? formatLongTime(previousAvg) : '기록 없음'}</strong></span>`,
+    `<span>시간 변화: <strong>${formatTimeDelta(currentMs, previousLast)}</strong></span>`
+  ];
+  return `<div class="review-compare-box"><strong>${escapeHtml(baseline.label || '복습')} 시간 비교</strong>${rows.join('')}</div>`;
 }
 
 function escapeHtml(value) {
@@ -565,6 +603,7 @@ function startSession(problems, options = {}) {
   state.queue = source.slice(0, count > 0 ? Math.min(count, source.length) : source.length);
   state.queueIndex = 0;
   const minutes = Number(options.minutes || 0);
+  state.reviewBaseline = null;
   state.session = {
     label: options.label || '랜덤 풀이',
     startedAt: Date.now(),
@@ -582,6 +621,7 @@ function startSession(problems, options = {}) {
 }
 
 function startDirectProblem(problem) {
+  state.reviewBaseline = null;
   clearPausedSession();
   clearTimeout(state.autoNextTimer);
   state.autoNextTimer = null;
@@ -604,9 +644,38 @@ function startDirectProblem(problem) {
   switchView('solveView');
 }
 
+function startReviewProblem(problem, label = '복습') {
+  state.reviewBaseline = reviewBaselineFor(problem, label);
+  clearPausedSession();
+  clearTimeout(state.autoNextTimer);
+  state.autoNextTimer = null;
+  if (els.sessionSummary) els.sessionSummary.classList.add('hidden');
+  state.queue = [problem];
+  state.queueIndex = 0;
+  state.session = {
+    label,
+    startedAt: Date.now(),
+    endAt: 0,
+    total: 1,
+    answered: 0,
+    correct: 0,
+    elapsedOnFinish: 0,
+    problemIds: [problem.id],
+    answeredIds: [],
+    wrongIds: []
+  };
+  loadCurrentProblem(problem);
+  switchView('solveView');
+}
+
 function loadCurrentProblem(problem) {
   saveInkToCurrentProblem(false);
   state.current = problem;
+  if (state.session && String(state.session.label || '').includes('복습')) {
+    state.reviewBaseline = reviewBaselineFor(problem, state.session.label);
+  } else if (state.reviewBaseline && state.reviewBaseline.problemId !== problem.id) {
+    state.reviewBaseline = null;
+  }
   state.selectedAnswer = null;
   state.checked = false;
   state.questionStart = Date.now();
@@ -624,7 +693,10 @@ function loadCurrentProblem(problem) {
   els.problemTitle.textContent = `문제 ${state.queueIndex + 1}/${state.queue.length}`;
   const avg = averageTime(problem) ? `평균 ${formatLongTime(averageTime(problem))}` : '기록 없음';
   const yearText = normalizedYear(problem.year) ? ` · ${normalizedYear(problem.year)}` : '';
-  els.problemMeta.textContent = `${canonicalSubject(problem.subject)}${yearText} · 정답률 ${accuracy(problem)}% · ${avg}`;
+  const reviewMeta = state.reviewBaseline && state.reviewBaseline.problemId === problem.id
+    ? ` · 이전 최근 ${state.reviewBaseline.previousLastTimeMs ? formatLongTime(state.reviewBaseline.previousLastTimeMs) : '기록 없음'}`
+    : '';
+  els.problemMeta.textContent = `${canonicalSubject(problem.subject)}${yearText} · 정답률 ${accuracy(problem)}% · ${avg}${reviewMeta}`;
   els.problemImage.src = problem.imageData;
   els.flagBtn.textContent = problem.flagged ? '다시보기 해제' : '다시보기 지정';
   setDrawTool('pen');
@@ -745,7 +817,8 @@ async function checkAnswer(options = {}) {
   const clearText = isCorrect && !p.wrongActive && (p.correctStreak || 0) >= WRONG_CLEAR_STREAK
     ? '<br>오답노트에서 자동 해제됨.'
     : '';
-  els.resultBox.innerHTML = `${isCorrect ? '정답입니다.' : '오답입니다.'}<br>선택: ${choiceLabel(state.selectedAnswer)} / 정답: ${choiceLabel(p.answer)}<br>풀이시간: ${formatLongTime(elapsed)}${clearText}`;
+  const compareBlock = comparisonHtml(elapsed, state.reviewBaseline);
+  els.resultBox.innerHTML = `${isCorrect ? '정답입니다.' : '오답입니다.'}<br>선택: ${choiceLabel(state.selectedAnswer)} / 정답: ${choiceLabel(p.answer)}<br>풀이시간: ${formatLongTime(elapsed)}${clearText}${compareBlock}`;
   els.resultBox.classList.remove('hidden');
   if (options.autoAdvance) {
     els.explanationBox.classList.add('hidden');
@@ -1268,39 +1341,74 @@ function renderProblemList() {
   });
 }
 
+function reviewListForMode(mode) {
+  if (mode === 'correct') {
+    return state.problems
+      .filter((p) => (p.correct || 0) > 0 && !p.wrongActive)
+      .sort((a, b) => (b.lastAnsweredAt || 0) - (a.lastAnsweredAt || 0));
+  }
+  return state.problems
+    .filter((p) => p.wrongActive)
+    .sort((a, b) => (b.lastAnsweredAt || 0) - (a.lastAnsweredAt || 0));
+}
+
+function setReviewMode(mode) {
+  state.reviewMode = mode;
+  if (els.reviewWrongBtn) els.reviewWrongBtn.classList.toggle('secondary', mode !== 'wrong');
+  if (els.reviewCorrectBtn) els.reviewCorrectBtn.classList.toggle('secondary', mode !== 'correct');
+  if (els.reviewWrongRandomBtn) els.reviewWrongRandomBtn.classList.add('secondary');
+  renderWrongList();
+}
+
 function renderWrongList() {
-  const list = state.problems.filter((p) => p.wrongActive);
+  const mode = state.reviewMode || 'wrong';
+  const list = reviewListForMode(mode);
   els.wrongList.innerHTML = '';
+  if (els.reviewListTitle) els.reviewListTitle.textContent = mode === 'correct' ? '정답복습' : '오답복습';
   if (!list.length) {
-    els.wrongList.innerHTML = '<p class="hint">현재 오답노트가 비어 있어.</p>';
+    els.wrongList.innerHTML = mode === 'correct'
+      ? '<p class="hint">아직 정답복습할 문제가 없어.</p>'
+      : '<p class="hint">현재 복습할 오답이 없어.</p>';
     return;
   }
-  list.sort((a, b) => (b.lastAnsweredAt || 0) - (a.lastAnsweredAt || 0));
   for (const p of list) {
-    els.wrongList.appendChild(problemItem(p, true));
+    els.wrongList.appendChild(problemItem(p, true, '', mode));
   }
 }
 
-function problemItem(p, wrongOnly, displayNumber = '') {
+function problemItem(p, wrongOnly, displayNumber = '', reviewMode = '') {
   const div = document.createElement('article');
-  div.className = wrongOnly ? 'item' : 'item numbered';
+  div.className = wrongOnly ? 'item review-item' : 'item numbered';
   div.dataset.id = p.id;
   const streak = p.wrongActive ? `오답해제까지 ${Math.max(0, WRONG_CLEAR_STREAK - (p.correctStreak || 0))}회 정답 필요` : '오답 아님';
   const hasExpImage = p.explanationImageData ? ' · 해설이미지 있음' : '';
   const numberBadge = wrongOnly ? '' : `<div class="list-number" aria-label="문제 번호">${displayNumber}</div>`;
+  const lastTime = p.lastTimeMs ? formatLongTime(p.lastTimeMs) : '기록 없음';
+  const avgTime = (p.attempts || 0) ? formatLongTime(averageTime(p)) : '기록 없음';
+  const totalTime = p.totalTimeMs ? formatLongTime(p.totalTimeMs) : '기록 없음';
+  const lastDate = p.lastAnsweredAt ? new Date(p.lastAnsweredAt).toLocaleString('ko-KR') : '기록 없음';
+  const statusText = reviewMode === 'correct' ? '정답복습' : wrongOnly ? '오답복습' : '';
   div.innerHTML = `
     ${numberBadge}
     <img src="${p.imageData}" alt="문제 썸네일">
     <div>
       <h3>${escapeHtml(canonicalSubject(p.subject))}${normalizedYear(p.year) ? ` · ${escapeHtml(normalizedYear(p.year))}` : ''} · 정답 ${choiceLabel(p.answer)}</h3>
-      <p>풀이 ${p.attempts || 0}회 · 정답률 ${accuracy(p)}% · 평균 ${formatLongTime(averageTime(p))}</p>
-      <p>${escapeHtml(streak)}${p.flagged ? ' · 다시보기 지정' : ''}${hasExpImage}</p>
+      <p>풀이 ${p.attempts || 0}회 · 정답률 ${accuracy(p)}% · 최근 풀이시간 ${lastTime} · 평균 ${avgTime}</p>
+      <p>${statusText ? escapeHtml(statusText) + ' · ' : ''}${escapeHtml(streak)}${p.flagged ? ' · 다시보기 지정' : ''}${hasExpImage}</p>
+      <div class="review-time-detail hidden">
+        <strong>복습 기록</strong>
+        <span>이전 최근 풀이: ${lastTime}</span>
+        <span>이전 평균 풀이: ${avgTime}</span>
+        <span>누적 풀이: ${totalTime}</span>
+        <span>마지막 풀이: ${escapeHtml(lastDate)}</span>
+        ${wrongOnly ? `<button data-action="solve" data-id="${p.id}" data-context="wrong" type="button">이 문제 복습 풀기</button><span>풀고 나면 이번 풀이시간과 이전 풀이시간을 비교해서 보여줘.</span>` : ''}
+      </div>
       <div class="item-actions">
         ${wrongOnly ? '' : `<button data-action="moveUp" data-id="${p.id}" data-context="list" class="secondary order-btn" type="button">위</button><button data-action="moveDown" data-id="${p.id}" data-context="list" class="secondary order-btn" type="button">아래</button>`}
-        <button data-action="solve" data-id="${p.id}" data-context="${wrongOnly ? 'wrong' : 'list'}" type="button">풀기</button>
+        <button data-action="solve" data-id="${p.id}" data-context="${wrongOnly ? 'wrong' : 'list'}" type="button">${wrongOnly ? '복습 풀기' : '풀기'}</button>
         <button data-action="edit" data-id="${p.id}" data-context="${wrongOnly ? 'wrong' : 'list'}" class="secondary" type="button">수정</button>
         <button data-action="flag" data-id="${p.id}" data-context="${wrongOnly ? 'wrong' : 'list'}" class="secondary" type="button">${p.flagged ? '다시보기 해제' : '다시보기'}</button>
-        ${wrongOnly ? `<button data-action="unwrong" data-id="${p.id}" data-context="wrong" class="secondary" type="button">오답 해제</button>` : ''}
+        ${wrongOnly && p.wrongActive ? `<button data-action="unwrong" data-id="${p.id}" data-context="wrong" class="secondary" type="button">오답 해제</button>` : ''}
         <button data-action="delete" data-id="${p.id}" data-context="${wrongOnly ? 'wrong' : 'list'}" class="danger-lite" type="button">삭제</button>
       </div>
     </div>
@@ -1507,7 +1615,11 @@ async function deleteProblemById(id) {
 
 async function handleItemClick(event) {
   const btn = event.target.closest('button[data-action]');
-  if (!btn) return;
+  if (!btn) {
+    const detail = event.currentTarget.querySelector('.review-time-detail');
+    if (detail) detail.classList.toggle('hidden');
+    return;
+  }
   const id = btn.dataset.id;
   const p = state.problems.find((item) => item.id === id);
   if (!p) return;
@@ -1515,10 +1627,17 @@ async function handleItemClick(event) {
   if (action === 'dragHandle') return;
   if (action === 'moveUp') { await moveVisibleProblem(id, -1); return; }
   if (action === 'moveDown') { await moveVisibleProblem(id, 1); return; }
-  if (action === 'solve') startDirectProblem(p);
+  if (action === 'solve') {
+    if (btn.dataset.context === 'wrong') {
+      const label = state.reviewMode === 'correct' ? '정답복습' : '오답복습';
+      startReviewProblem(p, label);
+    } else {
+      startDirectProblem(p);
+    }
+  }
   if (action === 'edit') {
     const sequence = btn.dataset.context === 'wrong'
-      ? state.problems.filter((item) => item.wrongActive).sort((a, b) => (b.lastAnsweredAt || 0) - (a.lastAnsweredAt || 0)).map((item) => item.id)
+      ? reviewListForMode(state.reviewMode || 'wrong').map((item) => item.id)
       : getVisibleProblemList().map((item) => item.id);
     editProblem(p, { sequence });
   }
@@ -2395,7 +2514,7 @@ async function exportData() {
   const problems = await getAll(STORES.problems);
   const history = await getAll(STORES.history);
   const payload = {
-    app: 'PSAT 랜덤 오답노트',
+    app: 'PSAT 랜덤 복습노트',
     version: 17,
     exportedAt: new Date().toISOString(),
     problems,
@@ -2563,7 +2682,7 @@ async function buildSyncPayload() {
   const history = await getAll(STORES.history);
   loadTombstones();
   const payload = {
-    app: 'PSAT 랜덤 오답노트',
+    app: 'PSAT 랜덤 복습노트',
     version: 3,
     contentUpdatedAt: 0,
     syncedAt: new Date().toISOString(),
@@ -2864,7 +2983,9 @@ function bindEvents() {
     }
     startDirectProblem(p);
   });
-  els.solveWrongBtn.addEventListener('click', () => startSession(filterProblems('wrong', ''), { count: 0, minutes: 0 }));
+  if (els.reviewWrongBtn) els.reviewWrongBtn.addEventListener('click', () => setReviewMode('wrong'));
+  if (els.reviewCorrectBtn) els.reviewCorrectBtn.addEventListener('click', () => setReviewMode('correct'));
+  if (els.reviewWrongRandomBtn) els.reviewWrongRandomBtn.addEventListener('click', () => startSession(filterProblems('wrong', ''), { count: 0, minutes: 0, label: '오답랜덤복습' }));
   els.clearSolvedWrongBtn.addEventListener('click', async () => {
     for (const p of state.problems) {
       if (p.wrongActive && (p.correctStreak || 0) >= WRONG_CLEAR_STREAK) {

@@ -1,11 +1,11 @@
 'use strict';
 
-const CACHE_NAME = 'psat-random-note-v22';
+const CACHE_NAME = 'psat-random-note-v24';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css?v=22',
-  './app.js?v=22',
+  './styles.css?v=23',
+  './app.js?v=23',
   './manifest.webmanifest',
   './assets/icon-192.png',
   './assets/icon-512.png'
