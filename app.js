@@ -9,7 +9,7 @@ const SYNC_CONFIG_KEY = 'psat-sync-config';
 const SYNC_TOMBSTONES_KEY = 'psat-sync-tombstones';
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const SUBJECT_GROUPS = ['언어', '자료', '상황'];
-const PAUSED_SESSION_KEY = 'psat-paused-session-v14';
+const PAUSED_SESSION_KEY = 'psat-paused-session-v15';
 
 const $ = (id) => document.getElementById(id);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -135,6 +135,7 @@ const state = {
   formProblemImageData: '',
   formExplanationImageData: '',
   formExplanationOcrData: '',
+  formExplanationOcrCandidates: [],
   lastOcrText: '',
   autoFitOnImageLoad: false,
   solveFullscreenActive: false,
@@ -1373,38 +1374,50 @@ function normalizeAnswerText(text) {
     .replace(/］|\]/g, ']')
     .replace(/[：﹕]/g, ':')
     .replace(/[|]/g, '1')
-    .replace(/Ｏ|〇|○/g, '0');
+    .replace(/[ＯOo〇○◯]/g, '0')
+    .replace(/[×✕✖]/g, 'X');
 }
 
 function extractAnswerNumberFromText(rawText) {
   const text = normalizeAnswerText(rawText);
-  const compact = text.replace(/\s+/g, ' ');
-  const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  const keywordPatterns = [
-    /(?:정\s*답|정답|해\s*답|해답|답안|답|answer|ans)[^1-5]{0,40}([1-5])\s*(?:번|[.)\]】〉>]|$)?/i,
-    /(?:정\s*답|정답|해\s*답|해답|답안|답)[^\n]{0,60}?([1-5])/i,
-    /(?:^|\n|\s)([1-5])\s*번\s*(?:이|가)?\s*(?:정\s*답|정답|답)/i,
-    /(?:correct\s*answer|answer)\s*[:：]?\s*([1-5])/i
+  // 예: "정답률 93.38%"는 절대 정답 단서로 쓰면 안 됨. 먼저 제거합니다.
+  const noRate = text.replace(/정\s*답\s*[률율][^\n\r]*/g, ' ');
+  const compact = noRate.replace(/\s+/g, ' ');
+  const lines = noRate.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+
+  const strictPatterns = [
+    /(?:정\s*답)(?!\s*[률율])\s*[:：\-]?\s*([1-5])\s*(?:번|[.)\]】〉>]|$)?/i,
+    /(?:해\s*답|해답|답안)\s*[:：\-]?\s*([1-5])\s*(?:번|[.)\]】〉>]|$)?/i,
+    /(?:correct\s*answer|answer|ans)\s*[:：\-]?\s*([1-5])/i,
+    /([1-5])\s*번\s*(?:이|가)?\s*(?:정\s*답|답)/i
   ];
-  for (const pattern of keywordPatterns) {
-    const match = compact.match(pattern) || text.match(pattern);
+  for (const pattern of strictPatterns) {
+    const match = compact.match(pattern) || noRate.match(pattern);
     if (match && match[1]) return Number(match[1]);
   }
 
-  // OCR이 줄바꿈을 살린 경우: '정답'이 들어간 줄과 그 다음 줄만 좁혀서 재검색
+  // OCR이 줄바꿈을 살린 경우: "정답"이 들어간 줄과 그 다음 줄만 검색합니다.
   for (let i = 0; i < lines.length; i += 1) {
-    if (!/(정\s*답|정답|해\s*답|해답|답안|answer|ans)/i.test(lines[i])) continue;
-    const windowText = [lines[i], lines[i + 1] || ''].join(' ');
-    const m = windowText.match(/([1-5])\s*(?:번|[.)\]】〉>]|$)?/);
+    const line = lines[i];
+    if (/정\s*답\s*[률율]/.test(line)) continue;
+    if (!/(정\s*답|해\s*답|해답|답안|answer|ans)/i.test(line)) continue;
+    const windowText = [line, lines[i + 1] || ''].join(' ');
+    const m = windowText.match(/(?:정\s*답|해\s*답|해답|답안|answer|ans)?\s*[:：\-]?\s*([1-5])\s*(?:번|[.)\]】〉>]|$)?/i);
     if (m) return Number(m[1]);
   }
+
+  // 해설지 형식: ①(X) ②(X) ③(X) ④(O) ⑤(X) 처럼 정답 선지에 O가 붙는 경우.
+  const markedCorrect = compact.match(/(?:^|\s)([1-5])\s*[\(\[\{]?\s*(?:0|ㅇ)\s*[\)\]\}]?/i);
+  if (markedCorrect && markedCorrect[1]) return Number(markedCorrect[1]);
 
   return 0;
 }
 
 async function detectAnswerFromExplanationImage(manual = false) {
-  const dataUrl = state.formExplanationOcrData || state.formExplanationImageData;
-  if (!dataUrl) {
+  const candidates = (state.formExplanationOcrCandidates && state.formExplanationOcrCandidates.length)
+    ? state.formExplanationOcrCandidates
+    : [state.formExplanationOcrData || state.formExplanationImageData].filter(Boolean);
+  if (!candidates.length) {
     if (manual) showToast('해설 이미지를 먼저 넣어줘');
     setAnswerDetectStatus('해설 이미지가 아직 없어.');
     return;
@@ -1419,22 +1432,29 @@ async function detectAnswerFromExplanationImage(manual = false) {
   state.answerDetectRunning = true;
   setAnswerDetectStatus('정답 인식 중... 조금 걸릴 수 있어.');
   try {
-    const result = await window.Tesseract.recognize(dataUrl, 'kor+eng', {
-      logger: (m) => {
-        if (!m || m.status !== 'recognizing text') return;
-        const pct = Math.round((m.progress || 0) * 100);
-        setAnswerDetectStatus(`정답 인식 중... ${pct}%`);
-      }
-    });
-    const text = result?.data?.text || '';
-    state.lastOcrText = text;
-    const answer = extractAnswerNumberFromText(text);
-    if (answer >= 1 && answer <= 5) {
-      els.answerInput.value = String(answer);
-      setAnswerDetectStatus(`정답 ${choiceLabel(answer)} 자동 입력됨`);
-      showToast(`정답 ${choiceLabel(answer)} 자동 입력됨`);
+    let foundAnswer = 0;
+    let collectedText = '';
+    for (let i = 0; i < candidates.length; i += 1) {
+      const label = i === 0 ? '오른쪽 위 정답칸' : (i === 1 ? '상단 영역' : '전체 해설');
+      const result = await window.Tesseract.recognize(candidates[i], 'kor+eng', {
+        logger: (m) => {
+          if (!m || m.status !== 'recognizing text') return;
+          const pct = Math.round((m.progress || 0) * 100);
+          setAnswerDetectStatus(`${label} 인식 중... ${pct}%`);
+        }
+      });
+      const text = result?.data?.text || '';
+      collectedText += `\n--- ${label} ---\n${text}`;
+      foundAnswer = extractAnswerNumberFromText(text);
+      if (foundAnswer >= 1 && foundAnswer <= 5) break;
+    }
+    state.lastOcrText = collectedText;
+    if (foundAnswer >= 1 && foundAnswer <= 5) {
+      els.answerInput.value = String(foundAnswer);
+      setAnswerDetectStatus(`정답 ${choiceLabel(foundAnswer)} 자동 입력됨`);
+      showToast(`정답 ${choiceLabel(foundAnswer)} 자동 입력됨`);
     } else {
-      setAnswerDetectStatus('정답 자동인식 실패. 해설 이미지에서 정답 부분이 작거나 흐리면 직접 선택해줘.');
+      setAnswerDetectStatus('정답 자동인식 실패. 정답 칸이 너무 작으면 직접 선택해줘.');
       if (manual) showToast('정답을 못 찾았어. 직접 선택해줘.');
     }
   } catch (err) {
@@ -1472,6 +1492,7 @@ function clearFormImage(target) {
   } else {
     state.formExplanationImageData = '';
     state.formExplanationOcrData = '';
+    state.formExplanationOcrCandidates = [];
     state.lastOcrText = '';
     els.explanationImageInput.value = '';
     els.previewExplanationImage.src = '';
@@ -1516,6 +1537,7 @@ function editProblem(p) {
   setFormImage('problem', p.imageData || '');
   if (p.explanationImageData) {
     state.formExplanationOcrData = p.explanationImageData;
+    state.formExplanationOcrCandidates = [p.explanationImageData];
     setFormImage('explanation', p.explanationImageData);
   }
   else clearFormImage('explanation');
@@ -1610,18 +1632,24 @@ async function imageBlobToDataUrl(blob) {
 }
 
 
-async function imageBlobToOcrDataUrl(blob) {
+async function imageBlobToOcrDataUrl(blob, crop = null) {
   try {
     const img = await blobToImage(blob);
     const originalWidth = img.naturalWidth || img.width;
     const originalHeight = img.naturalHeight || img.height;
     if (!originalWidth || !originalHeight) return blobToDataUrl(blob);
 
-    // 저장용 이미지는 압축해도, OCR용 이미지는 별도로 확대·흑백화해서 인식률을 높입니다.
-    const targetWidth = Math.min(3400, Math.max(2400, originalWidth));
-    const scale = targetWidth / originalWidth;
-    const width = Math.max(1, Math.round(originalWidth * scale));
-    const height = Math.max(1, Math.round(originalHeight * scale));
+    const cropX = crop ? Math.max(0, Math.round(originalWidth * crop.x)) : 0;
+    const cropY = crop ? Math.max(0, Math.round(originalHeight * crop.y)) : 0;
+    const cropW = crop ? Math.min(originalWidth - cropX, Math.round(originalWidth * crop.w)) : originalWidth;
+    const cropH = crop ? Math.min(originalHeight - cropY, Math.round(originalHeight * crop.h)) : originalHeight;
+    if (cropW <= 0 || cropH <= 0) return blobToDataUrl(blob);
+
+    // 정답 자동인식은 전체 해설보다 "오른쪽 위 정답칸"을 먼저 크게 확대해서 읽습니다.
+    const targetWidth = crop ? 2200 : Math.min(3400, Math.max(2400, cropW));
+    const scale = targetWidth / cropW;
+    const width = Math.max(1, Math.round(cropW * scale));
+    const height = Math.max(1, Math.round(cropH * scale));
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
@@ -1630,13 +1658,13 @@ async function imageBlobToOcrDataUrl(blob) {
     ctx.imageSmoothingQuality = 'high';
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, width, height);
-    ctx.drawImage(img, 0, 0, width, height);
+    ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, width, height);
 
     const imageData = ctx.getImageData(0, 0, width, height);
     const d = imageData.data;
     for (let i = 0; i < d.length; i += 4) {
       const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      const boosted = gray < 185 ? Math.max(0, gray * 0.45) : Math.min(255, 245 + (gray - 185) * 0.35);
+      const boosted = gray < 190 ? Math.max(0, gray * 0.40) : Math.min(255, 248 + (gray - 190) * 0.35);
       d[i] = boosted;
       d[i + 1] = boosted;
       d[i + 2] = boosted;
@@ -1649,6 +1677,19 @@ async function imageBlobToOcrDataUrl(blob) {
     console.warn('OCR image preprocessing failed', err);
     return blobToDataUrl(blob);
   }
+}
+
+async function imageBlobToAnswerOcrCandidates(blob) {
+  // 1순위: 오른쪽 위 정답칸. 사용자가 보낸 해설처럼 "정답 ④"가 이 위치에 있는 경우가 많음.
+  // 2순위: 상단 전체. 3순위: 전체 해설. 정답률·선지 내용 오인식을 줄이기 위한 순서입니다.
+  const crops = [
+    { x: 0.52, y: 0.00, w: 0.48, h: 0.25 },
+    { x: 0.00, y: 0.00, w: 1.00, h: 0.32 },
+    null
+  ];
+  const out = [];
+  for (const crop of crops) out.push(await imageBlobToOcrDataUrl(blob, crop));
+  return out;
 }
 
 async function fileToDataUrl(file) {
@@ -1664,7 +1705,10 @@ async function imageFileInputChanged(target, input) {
   if (!file) return;
   showToast('이미지 처리 중...');
   const data = await fileToDataUrl(file);
-  if (target === 'explanation') state.formExplanationOcrData = await imageBlobToOcrDataUrl(file);
+  if (target === 'explanation') {
+    state.formExplanationOcrCandidates = await imageBlobToAnswerOcrCandidates(file);
+    state.formExplanationOcrData = state.formExplanationOcrCandidates[0] || '';
+  }
   setFormImage(target, data);
   setPasteTarget(target);
   if (target === 'explanation') scheduleAnswerDetection();
@@ -1681,7 +1725,10 @@ async function pasteImageFromClipboardEvent(event, explicitTarget = '') {
   if (!file) return false;
   showToast('스크린샷 처리 중...');
   const data = await fileToDataUrl(file);
-  if (target === 'explanation') state.formExplanationOcrData = await imageBlobToOcrDataUrl(file);
+  if (target === 'explanation') {
+    state.formExplanationOcrCandidates = await imageBlobToAnswerOcrCandidates(file);
+    state.formExplanationOcrData = state.formExplanationOcrCandidates[0] || '';
+  }
   setFormImage(target, data);
   setPasteTarget(target);
   if (target === 'explanation') scheduleAnswerDetection();
@@ -1703,7 +1750,10 @@ async function pasteImageWithClipboardApi(target) {
       const blob = await item.getType(type);
       showToast('스크린샷 처리 중...');
       const data = await imageBlobToDataUrl(blob);
-      if (target === 'explanation') state.formExplanationOcrData = await imageBlobToOcrDataUrl(blob);
+      if (target === 'explanation') {
+        state.formExplanationOcrCandidates = await imageBlobToAnswerOcrCandidates(blob);
+        state.formExplanationOcrData = state.formExplanationOcrCandidates[0] || '';
+      }
       setFormImage(target, data);
       if (target === 'explanation') scheduleAnswerDetection();
       showToast(`${target === 'problem' ? '문제 스샷' : '해설 스샷'}을 붙여넣었어 · ${sizeToastPrefix(data)}`);
@@ -1799,7 +1849,7 @@ async function exportData() {
   const history = await getAll(STORES.history);
   const payload = {
     app: 'PSAT 랜덤 오답노트',
-    version: 14,
+    version: 15,
     exportedAt: new Date().toISOString(),
     problems,
     history
