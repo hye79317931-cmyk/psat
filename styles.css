@@ -1229,3 +1229,87 @@ body.solve-active {
   line-height: 1.4;
 }
 #detectAnswerBtn { min-height: 38px; }
+
+/* v18: 목록 드래그 순서 변경, 연도/회차 일괄 수정, 정답 빠른 지정 */
+.bulk-year-panel {
+  margin: 14px 0 6px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.045);
+}
+.bulk-year-panel h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.quick-answer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.045);
+}
+.quick-answer-row span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+.manual-answer {
+  min-width: 42px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  font-size: 18px;
+}
+.item.reorderable {
+  grid-template-columns: 42px 82px 1fr;
+  align-items: start;
+}
+.drag-handle {
+  width: 42px;
+  min-width: 42px;
+  min-height: 116px;
+  padding: 0;
+  border-radius: 12px;
+  background: rgba(125,211,252,.10);
+  border: 1px solid rgba(125,211,252,.28);
+  color: var(--accent);
+  cursor: grab;
+  touch-action: none;
+  font-size: 22px;
+  font-weight: 900;
+}
+.item.dragging {
+  opacity: .55;
+  transform: scale(.995);
+}
+.item.drop-before {
+  border-top: 4px solid var(--accent);
+}
+.item.drop-after {
+  border-bottom: 4px solid var(--accent);
+}
+@media (max-width: 520px) {
+  .item.reorderable {
+    grid-template-columns: 34px 72px 1fr;
+    gap: 8px;
+    padding: 9px;
+  }
+  .item.reorderable img {
+    width: 72px;
+    height: 102px;
+  }
+  .drag-handle {
+    width: 34px;
+    min-width: 34px;
+    min-height: 102px;
+    font-size: 18px;
+  }
+  .manual-answer {
+    flex: 1 1 42px;
+  }
+}

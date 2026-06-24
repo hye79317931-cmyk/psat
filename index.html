@@ -7,13 +7,13 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="assets/icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=17" />
+  <link rel="stylesheet" href="styles.css?v=18" />
 </head>
 <body>
   <header class="app-header">
     <div>
       <h1>PSAT 랜덤 오답노트</h1>
-      <p>PSAT 언어·자료·상황 · 연도별 분류 · 랜덤 세트 · 자동 다음문제 · 중단저장 · 해설 정답인식 · 수정 후 다음문제</p>
+      <p>PSAT 언어·자료·상황 · 연도/회차 분류 · 랜덤 세트 · 순서변경 · 일괄수정 · 빠른 정답지정</p>
     </div>
     <button id="installBtn" class="ghost hidden" type="button">홈화면 설치</button>
   </header>
@@ -52,7 +52,7 @@
           <label>대분류
             <select id="subjectFilter"><option value="">전체</option></select>
           </label>
-          <label>연도
+          <label>연도/회차
             <select id="yearFilter"><option value="">전체</option></select>
           </label>
           <label>세션 문제 수
@@ -154,8 +154,8 @@
                 <option value="상황">상황</option>
               </select>
             </label>
-            <label>연도
-              <input id="yearInput" type="number" min="1990" max="2099" step="1" placeholder="예: 2025" />
+            <label>연도/회차
+              <input id="yearInput" type="text" inputmode="text" placeholder="예: 2025, 2025 민경채, 입법고시" />
             </label>
             <label>정답
               <select id="answerInput" required>
@@ -208,6 +208,14 @@
             <button id="detectAnswerBtn" class="secondary" type="button">해설에서 정답 자동인식</button>
             <span id="answerDetectStatus" class="detect-status">해설 스샷을 붙이면 정답 인식을 시도합니다.</span>
           </div>
+          <div class="quick-answer-row" aria-label="정답 빠른 지정">
+            <span>인식 안 되면 바로 지정:</span>
+            <button class="manual-answer" data-answer="1" type="button">①</button>
+            <button class="manual-answer" data-answer="2" type="button">②</button>
+            <button class="manual-answer" data-answer="3" type="button">③</button>
+            <button class="manual-answer" data-answer="4" type="button">④</button>
+            <button class="manual-answer" data-answer="5" type="button">⑤</button>
+          </div>
 
           <label>해설 텍스트
             <textarea id="explanationInput" rows="5" placeholder="해설 이미지만 저장해도 되고, 필요한 메모를 추가로 적어도 됩니다."></textarea>
@@ -244,10 +252,26 @@
           <label>대분류 필터
             <select id="listSubjectFilter"><option value="">전체</option></select>
           </label>
-          <label>연도 필터
+          <label>연도/회차 필터
             <select id="listYearFilter"><option value="">전체</option></select>
           </label>
+          <label>연도/회차 직접 검색
+            <input id="listYearTextFilter" type="search" placeholder="예: 2025, 민경채, 입법" />
+          </label>
         </div>
+        <section class="bulk-year-panel" aria-label="연도/회차 일괄 수정">
+          <h3>연도/회차 일괄 수정</h3>
+          <div class="grid two">
+            <label>바꿀 기존 연도/회차
+              <select id="bulkYearSource"><option value="">현재 목록 전체</option></select>
+            </label>
+            <label>새 연도/회차
+              <input id="bulkYearTarget" type="text" inputmode="text" placeholder="예: 2025 5급, 민경채, 입법 2024" />
+            </label>
+          </div>
+          <button id="bulkYearApplyBtn" class="secondary" type="button">연도/회차 일괄 변경</button>
+          <p class="hint">왼쪽 ↕ 손잡이를 길게 누르고 끌면 현재 목록 안에서 문제 순서를 바꿀 수 있어.</p>
+        </section>
         <div id="problemList" class="list"></div>
       </section>
     </section>
@@ -276,6 +300,6 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="app.js?v=17"></script>
+  <script src="app.js?v=18"></script>
 </body>
 </html>
