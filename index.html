@@ -7,13 +7,13 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="assets/icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=15" />
+  <link rel="stylesheet" href="styles.css?v=17" />
 </head>
 <body>
   <header class="app-header">
     <div>
       <h1>PSAT 랜덤 오답노트</h1>
-      <p>PSAT 언어·자료·상황 · 연도별 분류 · 랜덤 세트 · 자동 다음문제 · 중단저장 · 해설 정답인식</p>
+      <p>PSAT 언어·자료·상황 · 연도별 분류 · 랜덤 세트 · 자동 다음문제 · 중단저장 · 해설 정답인식 · 수정 후 다음문제</p>
     </div>
     <button id="installBtn" class="ghost hidden" type="button">홈화면 설치</button>
   </header>
@@ -213,8 +213,10 @@
             <textarea id="explanationInput" rows="5" placeholder="해설 이미지만 저장해도 되고, 필요한 메모를 추가로 적어도 됩니다."></textarea>
           </label>
           <input id="tagsInput" type="hidden" value="" />
-          <div class="row wrap">
-            <button type="submit">저장</button>
+          <div class="row wrap form-action-row">
+            <button id="saveProblemBtn" type="submit">저장</button>
+            <button id="saveOnlyBtn" class="secondary hidden" type="submit" data-save-mode="stay">저장만</button>
+            <button id="newProblemModeBtn" class="secondary hidden" type="button">새 문제 등록 모드</button>
             <button id="resetFormBtn" class="secondary" type="button">새 문제로 초기화</button>
           </div>
         </form>
@@ -274,6 +276,6 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="app.js?v=15"></script>
+  <script src="app.js?v=17"></script>
 </body>
 </html>

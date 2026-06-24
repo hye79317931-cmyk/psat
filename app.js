@@ -9,7 +9,7 @@ const SYNC_CONFIG_KEY = 'psat-sync-config';
 const SYNC_TOMBSTONES_KEY = 'psat-sync-tombstones';
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const SUBJECT_GROUPS = ['언어', '자료', '상황'];
-const PAUSED_SESSION_KEY = 'psat-paused-session-v15';
+const PAUSED_SESSION_KEY = 'psat-paused-session-v17';
 
 const $ = (id) => document.getElementById(id);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -63,6 +63,9 @@ const els = {
 
   formTitle: $('formTitle'),
   problemForm: $('problemForm'),
+  saveProblemBtn: $('saveProblemBtn'),
+  saveOnlyBtn: $('saveOnlyBtn'),
+  newProblemModeBtn: $('newProblemModeBtn'),
   editingId: $('editingId'),
   subjectInput: $('subjectInput'),
   categoryInput: $('categoryInput'),
@@ -136,10 +139,14 @@ const state = {
   formExplanationImageData: '',
   formExplanationOcrData: '',
   formExplanationOcrCandidates: [],
+  formExplanationVisualAnswer: 0,
+  formExplanationVisualConfidence: 0,
   lastOcrText: '',
   autoFitOnImageLoad: false,
   solveFullscreenActive: false,
   saveBusy: false,
+  editQueueIds: [],
+  lastEditedId: '',
   answerDetectRunning: false,
   answerDetectTimer: null,
   syncConfig: null,
@@ -1203,11 +1210,11 @@ async function toggleFlag() {
   await refresh();
 }
 
-function renderProblemList() {
+function getVisibleProblemList() {
   const query = els.searchInput.value.trim().toLowerCase();
   const subject = els.listSubjectFilter.value;
   const year = els.listYearFilter?.value || '';
-  const list = state.problems.filter((p) => {
+  return state.problems.filter((p) => {
     if (subject && !subjectMatches(p, subject)) return false;
     if (year && normalizedYear(p.year) !== year) return false;
     if (!query) return true;
@@ -1215,6 +1222,10 @@ function renderProblemList() {
     const hay = [canonicalSubject(p.subject), p.subject, p.year, p.explanation, imageKeyword].join(' ').toLowerCase();
     return hay.includes(query);
   });
+}
+
+function renderProblemList() {
+  const list = getVisibleProblemList();
   els.problemList.innerHTML = '';
   if (!list.length) {
     els.problemList.innerHTML = '<p class="hint">표시할 문제가 없어.</p>';
@@ -1250,11 +1261,11 @@ function problemItem(p, wrongOnly) {
       <p>풀이 ${p.attempts || 0}회 · 정답률 ${accuracy(p)}% · 평균 ${formatLongTime(averageTime(p))}</p>
       <p>${escapeHtml(streak)}${p.flagged ? ' · 다시보기 지정' : ''}${hasExpImage}</p>
       <div class="item-actions">
-        <button data-action="solve" data-id="${p.id}" type="button">풀기</button>
-        <button data-action="edit" data-id="${p.id}" class="secondary" type="button">수정</button>
-        <button data-action="flag" data-id="${p.id}" class="secondary" type="button">${p.flagged ? '다시보기 해제' : '다시보기'}</button>
-        ${wrongOnly ? `<button data-action="unwrong" data-id="${p.id}" class="secondary" type="button">오답 해제</button>` : ''}
-        <button data-action="delete" data-id="${p.id}" class="danger-lite" type="button">삭제</button>
+        <button data-action="solve" data-id="${p.id}" data-context="${wrongOnly ? 'wrong' : 'list'}" type="button">풀기</button>
+        <button data-action="edit" data-id="${p.id}" data-context="${wrongOnly ? 'wrong' : 'list'}" class="secondary" type="button">수정</button>
+        <button data-action="flag" data-id="${p.id}" data-context="${wrongOnly ? 'wrong' : 'list'}" class="secondary" type="button">${p.flagged ? '다시보기 해제' : '다시보기'}</button>
+        ${wrongOnly ? `<button data-action="unwrong" data-id="${p.id}" data-context="wrong" class="secondary" type="button">오답 해제</button>` : ''}
+        <button data-action="delete" data-id="${p.id}" data-context="${wrongOnly ? 'wrong' : 'list'}" class="danger-lite" type="button">삭제</button>
       </div>
     </div>
   `;
@@ -1304,7 +1315,12 @@ async function handleItemClick(event) {
   if (!p) return;
   const action = btn.dataset.action;
   if (action === 'solve') startDirectProblem(p);
-  if (action === 'edit') editProblem(p);
+  if (action === 'edit') {
+    const sequence = btn.dataset.context === 'wrong'
+      ? state.problems.filter((item) => item.wrongActive).sort((a, b) => (b.lastAnsweredAt || 0) - (a.lastAnsweredAt || 0)).map((item) => item.id)
+      : getVisibleProblemList().map((item) => item.id);
+    editProblem(p, { sequence });
+  }
   if (action === 'flag') {
     p.flagged = !p.flagged;
     await put(STORES.problems, p);
@@ -1423,6 +1439,13 @@ async function detectAnswerFromExplanationImage(manual = false) {
     return;
   }
   if (state.answerDetectRunning) return;
+  if (state.formExplanationVisualAnswer >= 1 && state.formExplanationVisualAnswer <= 5) {
+    els.answerInput.value = String(state.formExplanationVisualAnswer);
+    const pct = Math.round((state.formExplanationVisualConfidence || 0) * 100);
+    setAnswerDetectStatus(`오른쪽 위 정답칸에서 ${choiceLabel(state.formExplanationVisualAnswer)} 자동 입력됨${pct ? ` · 신뢰도 ${pct}%` : ''}`);
+    showToast(`정답 ${choiceLabel(state.formExplanationVisualAnswer)} 자동 입력됨`);
+    return;
+  }
   if (!window.Tesseract || !window.Tesseract.recognize) {
     const msg = 'OCR 로딩 전이야. 인터넷 연결 후 잠시 뒤 다시 눌러줘.';
     setAnswerDetectStatus(msg);
@@ -1436,13 +1459,16 @@ async function detectAnswerFromExplanationImage(manual = false) {
     let collectedText = '';
     for (let i = 0; i < candidates.length; i += 1) {
       const label = i === 0 ? '오른쪽 위 정답칸' : (i === 1 ? '상단 영역' : '전체 해설');
-      const result = await window.Tesseract.recognize(candidates[i], 'kor+eng', {
+      const ocrOptions = {
+        tessedit_pageseg_mode: i === 0 ? '7' : '6',
+        preserve_interword_spaces: '1',
         logger: (m) => {
           if (!m || m.status !== 'recognizing text') return;
           const pct = Math.round((m.progress || 0) * 100);
           setAnswerDetectStatus(`${label} 인식 중... ${pct}%`);
         }
-      });
+      };
+      const result = await window.Tesseract.recognize(candidates[i], 'kor+eng', ocrOptions);
       const text = result?.data?.text || '';
       collectedText += `\n--- ${label} ---\n${text}`;
       foundAnswer = extractAnswerNumberFromText(text);
@@ -1493,11 +1519,39 @@ function clearFormImage(target) {
     state.formExplanationImageData = '';
     state.formExplanationOcrData = '';
     state.formExplanationOcrCandidates = [];
+    state.formExplanationVisualAnswer = 0;
+    state.formExplanationVisualConfidence = 0;
     state.lastOcrText = '';
     els.explanationImageInput.value = '';
     els.previewExplanationImage.src = '';
     els.previewExplanationImage.classList.add('hidden');
   }
+}
+
+function updateFormModeUi() {
+  const editing = !!els.editingId.value;
+  if (els.saveProblemBtn) els.saveProblemBtn.textContent = editing ? '저장 후 다음' : '저장';
+  if (els.saveOnlyBtn) els.saveOnlyBtn.classList.toggle('hidden', !editing);
+  if (els.newProblemModeBtn) els.newProblemModeBtn.classList.toggle('hidden', !editing);
+  if (els.resetFormBtn) els.resetFormBtn.textContent = editing ? '현재 내용 초기화' : '새 문제로 초기화';
+}
+
+function enterNewProblemMode() {
+  resetForm();
+  showToast('새 문제 등록 모드야');
+}
+
+function getNextEditProblemId(currentId) {
+  const activeIds = new Set(state.problems.map((p) => p.id));
+  const queue = (state.editQueueIds || []).filter((id) => activeIds.has(id));
+  if (queue.length) {
+    const idx = queue.indexOf(currentId);
+    if (idx >= 0 && idx < queue.length - 1) return queue[idx + 1];
+  }
+  const fallback = state.problems.map((p) => p.id);
+  const fallbackIdx = fallback.indexOf(currentId);
+  if (fallbackIdx >= 0 && fallbackIdx < fallback.length - 1) return fallback[fallbackIdx + 1];
+  return '';
 }
 
 function resetForm() {
@@ -1514,16 +1568,22 @@ function resetForm() {
   if (els.tagsInput) els.tagsInput.value = '';
   saveFormPreferences();
   els.formTitle.textContent = '문제 등록';
+  state.editQueueIds = [];
+  state.lastEditedId = '';
+  updateFormModeUi();
   clearFormImage('problem');
   clearFormImage('explanation');
-  setAnswerDetectStatus('해설 스샷을 붙이면 정답 인식을 시도합니다.');
+  setAnswerDetectStatus('해설 스샷을 붙이면 오른쪽 위 정답칸을 먼저 읽습니다.');
   els.imageInput.required = false;
   setPasteTarget('problem');
 }
 
-function editProblem(p) {
+function editProblem(p, options = {}) {
   els.formTitle.textContent = '문제 수정';
   els.editingId.value = p.id;
+  if (Array.isArray(options.sequence) && options.sequence.length) state.editQueueIds = [...options.sequence];
+  else if (!state.editQueueIds.length) state.editQueueIds = state.problems.map((item) => item.id);
+  state.lastEditedId = p.id;
   els.subjectInput.value = SUBJECT_GROUPS.includes(canonicalSubject(p.subject)) ? canonicalSubject(p.subject) : '언어';
   if (els.yearInput) els.yearInput.value = normalizedYear(p.year);
   if (els.categoryInput) els.categoryInput.value = p.category || '';
@@ -1542,6 +1602,7 @@ function editProblem(p) {
   }
   else clearFormImage('explanation');
   els.imageInput.required = false;
+  updateFormModeUi();
   setPasteTarget('problem');
   switchView('addView');
 }
@@ -1595,6 +1656,252 @@ function canvasToBlob(canvas, mime, quality) {
   return new Promise((resolve) => {
     canvas.toBlob((blob) => resolve(blob), mime, quality);
   });
+}
+
+
+function isAnswerBlackPixel(r, g, b) {
+  // 빨간 펜 표시/동그라미는 정답 숫자 후보에서 제외하고, 인쇄된 검은 글자만 남깁니다.
+  const looksRed = r > 130 && g < 130 && b < 130 && r > g * 1.25 && r > b * 1.25;
+  if (looksRed) return false;
+  return r < 178 && g < 178 && b < 178 && (r + g + b) / 3 < 172;
+}
+
+function getDigitTemplateMasks() {
+  if (getDigitTemplateMasks.cache) return getDigitTemplateMasks.cache;
+  const out = [];
+  for (let digit = 1; digit <= 5; digit += 1) {
+    for (const size of [40, 44, 48, 52, 56, 60]) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 96;
+      canvas.height = 96;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#000';
+      ctx.font = `900 ${size}px Arial, Helvetica, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(digit), 48, 52);
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const mask = new Uint8Array(canvas.width * canvas.height);
+      for (let i = 0, j = 0; i < data.length; i += 4, j += 1) {
+        mask[j] = data[i] < 128 && data[i + 1] < 128 && data[i + 2] < 128 ? 1 : 0;
+      }
+      const normalized = normalizeMask32(mask, canvas.width, canvas.height);
+      out.push({ digit, mask: normalized, dilated: dilateMask32(normalized) });
+    }
+  }
+  getDigitTemplateMasks.cache = out;
+  return out;
+}
+
+function normalizeMask32(mask, width, height) {
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (!mask[y * width + x]) continue;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  const out = new Uint8Array(32 * 32);
+  if (maxX < minX || maxY < minY) return out;
+  const srcW = maxX - minX + 1;
+  const srcH = maxY - minY + 1;
+  const scale = Math.min(28 / srcW, 28 / srcH);
+  const dstW = Math.max(1, Math.round(srcW * scale));
+  const dstH = Math.max(1, Math.round(srcH * scale));
+  const offsetX = Math.floor((32 - dstW) / 2);
+  const offsetY = Math.floor((32 - dstH) / 2);
+  for (let dy = 0; dy < dstH; dy += 1) {
+    const sy = minY + Math.min(srcH - 1, Math.floor(dy / dstH * srcH));
+    for (let dx = 0; dx < dstW; dx += 1) {
+      const sx = minX + Math.min(srcW - 1, Math.floor(dx / dstW * srcW));
+      if (mask[sy * width + sx]) out[(offsetY + dy) * 32 + offsetX + dx] = 1;
+    }
+  }
+  return out;
+}
+
+function dilateMask32(mask) {
+  const out = new Uint8Array(32 * 32);
+  for (let y = 0; y < 32; y += 1) {
+    for (let x = 0; x < 32; x += 1) {
+      let on = 0;
+      for (let yy = Math.max(0, y - 1); yy <= Math.min(31, y + 1); yy += 1) {
+        for (let xx = Math.max(0, x - 1); xx <= Math.min(31, x + 1); xx += 1) {
+          if (mask[yy * 32 + xx]) { on = 1; break; }
+        }
+        if (on) break;
+      }
+      out[y * 32 + x] = on;
+    }
+  }
+  return out;
+}
+
+function compareDigitMasks(candidate, template, templateDilated) {
+  const candidateDilated = dilateMask32(candidate);
+  let miss = 0;
+  let union = 0;
+  for (let i = 0; i < candidate.length; i += 1) {
+    const c = candidate[i];
+    const t = template[i];
+    if (c || t) union += 1;
+    if (c && !templateDilated[i]) miss += 1;
+    if (t && !candidateDilated[i]) miss += 1;
+  }
+  return union ? miss / union : 1;
+}
+
+function findBlackComponents(mask, width, height) {
+  const seen = new Uint8Array(width * height);
+  const components = [];
+  const stack = [];
+  for (let start = 0; start < mask.length; start += 1) {
+    if (!mask[start] || seen[start]) continue;
+    let minX = width;
+    let minY = height;
+    let maxX = 0;
+    let maxY = 0;
+    let area = 0;
+    stack.length = 0;
+    stack.push(start);
+    seen[start] = 1;
+    while (stack.length) {
+      const idx = stack.pop();
+      const x = idx % width;
+      const y = Math.floor(idx / width);
+      area += 1;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      const left = idx - 1;
+      const right = idx + 1;
+      const up = idx - width;
+      const down = idx + width;
+      if (x > 0 && mask[left] && !seen[left]) { seen[left] = 1; stack.push(left); }
+      if (x < width - 1 && mask[right] && !seen[right]) { seen[right] = 1; stack.push(right); }
+      if (y > 0 && mask[up] && !seen[up]) { seen[up] = 1; stack.push(up); }
+      if (y < height - 1 && mask[down] && !seen[down]) { seen[down] = 1; stack.push(down); }
+    }
+    const w = maxX - minX + 1;
+    const h = maxY - minY + 1;
+    if (area >= 10) components.push({ x: minX, y: minY, w, h, area, cx: minX + w / 2, cy: minY + h / 2 });
+  }
+  return components;
+}
+
+function classifyDigitInsideComponent(imageData, width, height, box) {
+  const data = imageData.data;
+  const padX = Math.max(4, Math.round(box.w * 0.28));
+  const padY = Math.max(4, Math.round(box.h * 0.28));
+  const x0 = Math.max(0, box.x - padX);
+  const y0 = Math.max(0, box.y - padY);
+  const x1 = Math.min(width, box.x + box.w + padX);
+  const y1 = Math.min(height, box.y + box.h + padY);
+  const localW = x1 - x0;
+  const localH = y1 - y0;
+  if (localW < 10 || localH < 10) return { answer: 0, score: 1 };
+
+  let best = { answer: 0, score: 1 };
+  const templates = getDigitTemplateMasks();
+  for (const pad of [0.22, 0.25, 0.28, 0.31, 0.34]) {
+    const ix0 = x0 + Math.floor(localW * pad);
+    const iy0 = y0 + Math.floor(localH * pad);
+    const ix1 = x0 + Math.ceil(localW * (1 - pad));
+    const iy1 = y0 + Math.ceil(localH * (1 - pad));
+    const innerW = Math.max(1, ix1 - ix0);
+    const innerH = Math.max(1, iy1 - iy0);
+    const digitMask = new Uint8Array(innerW * innerH);
+    let count = 0;
+    for (let y = 0; y < innerH; y += 1) {
+      for (let x = 0; x < innerW; x += 1) {
+        const px = ix0 + x;
+        const py = iy0 + y;
+        const i = (py * width + px) * 4;
+        if (isAnswerBlackPixel(data[i], data[i + 1], data[i + 2])) {
+          digitMask[y * innerW + x] = 1;
+          count += 1;
+        }
+      }
+    }
+    if (count < 8) continue;
+    const normalized = normalizeMask32(digitMask, innerW, innerH);
+    for (const tmpl of templates) {
+      const score = compareDigitMasks(normalized, tmpl.mask, tmpl.dilated);
+      if (score < best.score) best = { answer: tmpl.digit, score };
+    }
+  }
+  return best;
+}
+
+async function detectAnswerVisuallyFromBlob(blob) {
+  try {
+    const img = await blobToImage(blob);
+    const ow = img.naturalWidth || img.width;
+    const oh = img.naturalHeight || img.height;
+    if (!ow || !oh) return { answer: 0, confidence: 0 };
+    // 오른쪽 위 정답칸 전용 탐지. OCR보다 먼저 수행해서 정답률 숫자 오인식을 피합니다.
+    const crops = [
+      { x: 0.60, y: 0.035, w: 0.38, h: 0.22 },
+      { x: 0.68, y: 0.055, w: 0.30, h: 0.18 },
+      { x: 0.52, y: 0.00, w: 0.48, h: 0.28 }
+    ];
+    for (const crop of crops) {
+      const sx = Math.max(0, Math.round(ow * crop.x));
+      const sy = Math.max(0, Math.round(oh * crop.y));
+      const sw = Math.min(ow - sx, Math.round(ow * crop.w));
+      const sh = Math.min(oh - sy, Math.round(oh * crop.h));
+      if (sw <= 0 || sh <= 0) continue;
+      const maxW = 900;
+      const scale = Math.min(1, maxW / sw);
+      const cw = Math.max(1, Math.round(sw * scale));
+      const ch = Math.max(1, Math.round(sh * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = cw;
+      canvas.height = ch;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true, alpha: false });
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
+      const imageData = ctx.getImageData(0, 0, cw, ch);
+      const data = imageData.data;
+      const mask = new Uint8Array(cw * ch);
+      for (let i = 0, j = 0; i < data.length; i += 4, j += 1) {
+        mask[j] = isAnswerBlackPixel(data[i], data[i + 1], data[i + 2]) ? 1 : 0;
+      }
+      const minSide = Math.max(14, Math.min(cw, ch) * 0.055);
+      const maxSide = Math.max(28, Math.min(cw, ch) * 0.34);
+      const components = findBlackComponents(mask, cw, ch)
+        .filter((c) => {
+          const ratio = c.w / Math.max(1, c.h);
+          const squareish = ratio >= 0.55 && ratio <= 1.65;
+          const sized = c.w >= minSide && c.h >= minSide && c.w <= maxSide && c.h <= maxSide;
+          const rightSide = c.cx >= cw * 0.45;
+          const upperSide = c.cy <= ch * 0.82;
+          const denseEnough = c.area >= Math.max(40, c.w * c.h * 0.08);
+          return squareish && sized && rightSide && upperSide && denseEnough;
+        })
+        .sort((a, b) => (b.cx - a.cx) || (b.area - a.area));
+      for (const comp of components.slice(0, 5)) {
+        const result = classifyDigitInsideComponent(imageData, cw, ch, comp);
+        // 숫자 4처럼 모양이 뚜렷한 경우 0.42 미만이면 오른쪽 위 정답칸 후보로 인정합니다.
+        if (result.answer >= 1 && result.answer <= 5 && result.score < 0.42) {
+          return { answer: result.answer, confidence: Math.max(0, 1 - result.score), score: result.score };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Visual answer detection failed', err);
+  }
+  return { answer: 0, confidence: 0 };
 }
 
 async function imageBlobToDataUrl(blob) {
@@ -1706,6 +2013,9 @@ async function imageFileInputChanged(target, input) {
   showToast('이미지 처리 중...');
   const data = await fileToDataUrl(file);
   if (target === 'explanation') {
+    const visual = await detectAnswerVisuallyFromBlob(file);
+    state.formExplanationVisualAnswer = visual.answer || 0;
+    state.formExplanationVisualConfidence = visual.confidence || 0;
     state.formExplanationOcrCandidates = await imageBlobToAnswerOcrCandidates(file);
     state.formExplanationOcrData = state.formExplanationOcrCandidates[0] || '';
   }
@@ -1726,6 +2036,9 @@ async function pasteImageFromClipboardEvent(event, explicitTarget = '') {
   showToast('스크린샷 처리 중...');
   const data = await fileToDataUrl(file);
   if (target === 'explanation') {
+    const visual = await detectAnswerVisuallyFromBlob(file);
+    state.formExplanationVisualAnswer = visual.answer || 0;
+    state.formExplanationVisualConfidence = visual.confidence || 0;
     state.formExplanationOcrCandidates = await imageBlobToAnswerOcrCandidates(file);
     state.formExplanationOcrData = state.formExplanationOcrCandidates[0] || '';
   }
@@ -1751,6 +2064,9 @@ async function pasteImageWithClipboardApi(target) {
       showToast('스크린샷 처리 중...');
       const data = await imageBlobToDataUrl(blob);
       if (target === 'explanation') {
+        const visual = await detectAnswerVisuallyFromBlob(blob);
+        state.formExplanationVisualAnswer = visual.answer || 0;
+        state.formExplanationVisualConfidence = visual.confidence || 0;
         state.formExplanationOcrCandidates = await imageBlobToAnswerOcrCandidates(blob);
         state.formExplanationOcrData = state.formExplanationOcrCandidates[0] || '';
       }
@@ -1783,6 +2099,7 @@ async function saveProblemFromForm(event) {
 
   try {
     const editingId = els.editingId.value;
+    const saveMode = event.submitter?.dataset?.saveMode || (editingId ? 'next' : 'new');
     const existing = editingId ? state.problems.find((p) => p.id === editingId) : null;
 
     let imageData = state.formProblemImageData || existing?.imageData || '';
@@ -1832,9 +2149,30 @@ async function saveProblemFromForm(event) {
 
     await put(STORES.problems, problem);
     await refresh();
-    resetForm();
-    showToast(`${editingId ? '수정했어' : '저장했어'} · 현재 ${state.problems.length}문제`);
-    switchView('addView');
+
+    if (editingId) {
+      if (saveMode === 'stay') {
+        const updated = state.problems.find((p) => p.id === problem.id) || problem;
+        editProblem(updated, { sequence: state.editQueueIds });
+        showToast(`수정했어 · 현재 ${state.problems.length}문제`);
+      } else {
+        const nextId = getNextEditProblemId(problem.id);
+        if (nextId) {
+          const nextProblemToEdit = state.problems.find((p) => p.id === nextId);
+          if (nextProblemToEdit) {
+            editProblem(nextProblemToEdit, { sequence: state.editQueueIds });
+            showToast('수정했어 · 다음 문제로 이동했어');
+          }
+        } else {
+          resetForm();
+          showToast('마지막 문제까지 수정했어 · 새 문제 등록 모드로 전환했어');
+        }
+      }
+    } else {
+      resetForm();
+      showToast(`저장했어 · 현재 ${state.problems.length}문제`);
+      switchView('addView');
+    }
   } catch (err) {
     console.error(err);
     showToast(storageErrorMessage(err));
@@ -1849,7 +2187,7 @@ async function exportData() {
   const history = await getAll(STORES.history);
   const payload = {
     app: 'PSAT 랜덤 오답노트',
-    version: 15,
+    version: 17,
     exportedAt: new Date().toISOString(),
     problems,
     history
@@ -2331,6 +2669,7 @@ function bindEvents() {
 
   els.problemForm.addEventListener('submit', saveProblemFromForm);
   els.resetFormBtn.addEventListener('click', resetForm);
+  if (els.newProblemModeBtn) els.newProblemModeBtn.addEventListener('click', enterNewProblemMode);
   if (els.subjectInput) els.subjectInput.addEventListener('change', saveFormPreferences);
   if (els.yearInput) els.yearInput.addEventListener('input', saveFormPreferences);
   if (els.imageQualityInput) els.imageQualityInput.addEventListener('change', saveFormPreferences);
