@@ -7,13 +7,13 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="assets/icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=18" />
+  <link rel="stylesheet" href="styles.css?v=22" />
 </head>
 <body>
   <header class="app-header">
     <div>
       <h1>PSAT 랜덤 오답노트</h1>
-      <p>PSAT 언어·자료·상황 · 연도/회차 분류 · 랜덤 세트 · 목록 번호 · 일괄수정 · 직접 정답지정</p>
+      <p>PSAT 언어·자료·상황 · 연도/회차 분류 · 랜덤 세트 · 목록 번호 · 일괄수정 · 해설 아래 정답지정 확인</p>
     </div>
     <button id="installBtn" class="ghost hidden" type="button">홈화면 설치</button>
   </header>
@@ -157,15 +157,6 @@
             <label>연도/회차
               <input id="yearInput" type="text" inputmode="text" placeholder="예: 2025, 2025 민경채, 입법고시" />
             </label>
-            <label>정답
-              <select id="answerInput" required>
-                <option value="1">①</option>
-                <option value="2">②</option>
-                <option value="3">③</option>
-                <option value="4">④</option>
-                <option value="5">⑤</option>
-              </select>
-            </label>
           </div>
           <input id="categoryInput" type="hidden" value="" />
           <input id="difficultyInput" type="hidden" value="중" />
@@ -204,13 +195,26 @@
             <button id="clearExplanationImageBtn" class="secondary" type="button">해설 이미지 비우기</button>
           </div>
           <img id="previewExplanationImage" class="preview hidden" alt="해설 이미지 미리보기" />
-          <div class="quick-answer-row" aria-label="정답 직접 지정">
-            <span>정답 직접 지정:</span>
-            <button class="manual-answer" data-answer="1" type="button">①</button>
-            <button class="manual-answer" data-answer="2" type="button">②</button>
-            <button class="manual-answer" data-answer="3" type="button">③</button>
-            <button class="manual-answer" data-answer="4" type="button">④</button>
-            <button class="manual-answer" data-answer="5" type="button">⑤</button>
+
+          <div class="answer-assign-card" aria-label="정답 지정">
+            <div class="answer-assign-title">정답 지정</div>
+            <div class="quick-answer-row" aria-label="정답 직접 지정">
+              <span>번호 선택:</span>
+              <button class="manual-answer" data-answer="1" type="button">①</button>
+              <button class="manual-answer" data-answer="2" type="button">②</button>
+              <button class="manual-answer" data-answer="3" type="button">③</button>
+              <button class="manual-answer" data-answer="4" type="button">④</button>
+              <button class="manual-answer" data-answer="5" type="button">⑤</button>
+            </div>
+            <label>현재 정답 확인
+              <select id="answerInput" required>
+                <option value="1">①</option>
+                <option value="2">②</option>
+                <option value="3">③</option>
+                <option value="4">④</option>
+                <option value="5">⑤</option>
+              </select>
+            </label>
           </div>
 
           <button id="toggleExplanationTextBtn" class="secondary text-toggle-btn" type="button">해설 텍스트 입력 열기</button>
@@ -296,6 +300,6 @@
   </main>
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-  <script src="app.js?v=20"></script>
+  <script src="app.js?v=22"></script>
 </body>
 </html>

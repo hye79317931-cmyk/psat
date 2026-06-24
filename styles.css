@@ -1380,3 +1380,34 @@ body.reorder-active * {
     font-size: 13px;
   }
 }
+
+.answer-assign-card {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.answer-assign-card label {
+  margin: 0 0 10px;
+}
+
+.answer-assign-card select {
+  margin-top: 6px;
+}
+
+
+/* v22: 정답 지정 버튼 아래에 현재 정답 확인 항목 배치 */
+.answer-assign-title {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-weight: 900;
+  font-size: 14px;
+}
+.answer-assign-card .quick-answer-row {
+  margin: 0 0 10px;
+}
+.answer-assign-card label {
+  margin-top: 8px;
+}
