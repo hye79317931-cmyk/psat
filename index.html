@@ -7,7 +7,7 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="assets/icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=24" />
+  <link rel="stylesheet" href="styles.css?v=25" />
 </head>
 <body>
   <header class="app-header">
@@ -231,7 +231,18 @@
           <button id="reviewWrongRandomBtn" class="secondary" type="button">오답랜덤복습</button>
           <button id="reviewCorrectBtn" class="secondary" type="button">정답복습</button>
         </div>
-        <p class="hint">문제 카드를 누르면 이전 풀이시간을 확인하고 바로 복습으로 다시 풀 수 있어.</p>
+        <p class="hint">문제 카드를 누르면 이전 풀이시간을 확인하고 바로 복습으로 다시 풀 수 있어. 복습으로 다시 풀 때는 이전 필기가 자동으로 지워져.</p>
+        <div class="grid two review-filter-grid">
+          <label>대분류
+            <select id="reviewSubjectFilter"><option value="">전체</option></select>
+          </label>
+          <label>연도/회차
+            <select id="reviewYearFilter"><option value="">전체</option></select>
+          </label>
+          <label>연도/회차 직접 검색
+            <input id="reviewYearTextFilter" type="search" placeholder="예: 2025, 민경채, 입법" />
+          </label>
+        </div>
         <div class="row wrap">
           <button id="clearSolvedWrongBtn" class="secondary" type="button">2연속 정답 해제 반영</button>
         </div>
@@ -297,6 +308,6 @@
   </main>
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-  <script src="app.js?v=24"></script>
+  <script src="app.js?v=25"></script>
 </body>
 </html>

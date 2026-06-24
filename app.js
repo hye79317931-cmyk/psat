@@ -9,7 +9,7 @@ const SYNC_CONFIG_KEY = 'psat-sync-config';
 const SYNC_TOMBSTONES_KEY = 'psat-sync-tombstones';
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const SUBJECT_GROUPS = ['언어', '자료', '상황'];
-const PAUSED_SESSION_KEY = 'psat-paused-session-v20';
+const PAUSED_SESSION_KEY = 'psat-paused-session-v25';
 
 const $ = (id) => document.getElementById(id);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -94,6 +94,9 @@ const els = {
   reviewWrongBtn: $('reviewWrongBtn'),
   reviewWrongRandomBtn: $('reviewWrongRandomBtn'),
   reviewCorrectBtn: $('reviewCorrectBtn'),
+  reviewSubjectFilter: $('reviewSubjectFilter'),
+  reviewYearFilter: $('reviewYearFilter'),
+  reviewYearTextFilter: $('reviewYearTextFilter'),
   reviewListTitle: $('reviewListTitle'),
   clearSolvedWrongBtn: $('clearSolvedWrongBtn'),
   wrongList: $('wrongList'),
@@ -356,6 +359,19 @@ function formatTimeDelta(currentMs, previousMs) {
   return `${formatLongTime(Math.abs(diff))} ${direction}`;
 }
 
+
+function isReviewSessionLabel(label) {
+  return /복습|다시풀기/.test(String(label || ''));
+}
+
+function clearReviewAnnotations(problem) {
+  if (!problem) return;
+  if (Array.isArray(problem.annotations) && problem.annotations.length) {
+    problem.annotations = [];
+    put(STORES.problems, problem).catch((err) => console.error('review ink clear failed', err));
+  }
+}
+
 function comparisonHtml(currentMs, baseline) {
   if (!baseline || baseline.problemId !== state.current?.id) return '';
   const previousLast = baseline.previousLastTimeMs || 0;
@@ -457,8 +473,10 @@ async function refresh() {
   state.problems = sortProblemsForDisplay(await getAll(STORES.problems));
   fillSubjectSelect(els.subjectFilter);
   fillSubjectSelect(els.listSubjectFilter);
+  fillSubjectSelect(els.reviewSubjectFilter);
   fillYearSelect(els.yearFilter);
   fillYearSelect(els.listYearFilter);
+  fillYearSelect(els.reviewYearFilter);
   fillYearSelect(els.bulkYearSource);
   renderEmptyState();
   renderProblemList();
@@ -601,6 +619,7 @@ function startSession(problems, options = {}) {
   const count = Number(options.count || 0);
   const source = options.preserveOrder ? [...problems] : shuffle(problems);
   state.queue = source.slice(0, count > 0 ? Math.min(count, source.length) : source.length);
+  if (isReviewSessionLabel(options.label)) state.queue.forEach(clearReviewAnnotations);
   state.queueIndex = 0;
   const minutes = Number(options.minutes || 0);
   state.reviewBaseline = null;
@@ -645,6 +664,7 @@ function startDirectProblem(problem) {
 }
 
 function startReviewProblem(problem, label = '복습') {
+  clearReviewAnnotations(problem);
   state.reviewBaseline = reviewBaselineFor(problem, label);
   clearPausedSession();
   clearTimeout(state.autoNextTimer);
@@ -671,7 +691,7 @@ function startReviewProblem(problem, label = '복습') {
 function loadCurrentProblem(problem) {
   saveInkToCurrentProblem(false);
   state.current = problem;
-  if (state.session && String(state.session.label || '').includes('복습')) {
+  if (state.session && isReviewSessionLabel(state.session.label)) {
     state.reviewBaseline = reviewBaselineFor(problem, state.session.label);
   } else if (state.reviewBaseline && state.reviewBaseline.problemId !== problem.id) {
     state.reviewBaseline = null;
@@ -942,6 +962,7 @@ function renderSummaryWrongItems(ids) {
 
 function startReviewByIds(ids, label) {
   const list = ids.map((id) => state.problems.find((p) => p.id === id)).filter(Boolean);
+  if (isReviewSessionLabel(label)) list.forEach(clearReviewAnnotations);
   if (!list.length) {
     showToast('다시 풀 문제가 없어');
     return;
@@ -1342,12 +1363,22 @@ function renderProblemList() {
 }
 
 function reviewListForMode(mode) {
+  const subject = els.reviewSubjectFilter?.value || '';
+  const year = els.reviewYearFilter?.value || '';
+  const yearText = (els.reviewYearTextFilter?.value || '').trim().toLowerCase();
+  const applyReviewFilters = (list) => list.filter((p) => {
+    const problemYear = normalizedYear(p.year);
+    if (subject && !subjectMatches(p, subject)) return false;
+    if (year && problemYear !== year) return false;
+    if (yearText && !problemYear.toLowerCase().includes(yearText)) return false;
+    return true;
+  });
   if (mode === 'correct') {
-    return state.problems
+    return applyReviewFilters(state.problems)
       .filter((p) => (p.correct || 0) > 0 && !p.wrongActive)
       .sort((a, b) => (b.lastAnsweredAt || 0) - (a.lastAnsweredAt || 0));
   }
-  return state.problems
+  return applyReviewFilters(state.problems)
     .filter((p) => p.wrongActive)
     .sort((a, b) => (b.lastAnsweredAt || 0) - (a.lastAnsweredAt || 0));
 }
@@ -1364,7 +1395,11 @@ function renderWrongList() {
   const mode = state.reviewMode || 'wrong';
   const list = reviewListForMode(mode);
   els.wrongList.innerHTML = '';
-  if (els.reviewListTitle) els.reviewListTitle.textContent = mode === 'correct' ? '정답복습' : '오답복습';
+  if (els.reviewListTitle) {
+    const subject = els.reviewSubjectFilter?.value || '전체';
+    const year = els.reviewYearFilter?.value || els.reviewYearTextFilter?.value || '전체';
+    els.reviewListTitle.textContent = `${mode === 'correct' ? '정답복습' : '오답복습'} · 대분류 ${subject} · 연도/회차 ${year}`;
+  }
   if (!list.length) {
     els.wrongList.innerHTML = mode === 'correct'
       ? '<p class="hint">아직 정답복습할 문제가 없어.</p>'
@@ -2985,7 +3020,10 @@ function bindEvents() {
   });
   if (els.reviewWrongBtn) els.reviewWrongBtn.addEventListener('click', () => setReviewMode('wrong'));
   if (els.reviewCorrectBtn) els.reviewCorrectBtn.addEventListener('click', () => setReviewMode('correct'));
-  if (els.reviewWrongRandomBtn) els.reviewWrongRandomBtn.addEventListener('click', () => startSession(filterProblems('wrong', ''), { count: 0, minutes: 0, label: '오답랜덤복습' }));
+  if (els.reviewWrongRandomBtn) els.reviewWrongRandomBtn.addEventListener('click', () => startSession(reviewListForMode('wrong'), { count: 0, minutes: 0, label: '오답랜덤복습' }));
+  if (els.reviewSubjectFilter) els.reviewSubjectFilter.addEventListener('change', renderWrongList);
+  if (els.reviewYearFilter) els.reviewYearFilter.addEventListener('change', renderWrongList);
+  if (els.reviewYearTextFilter) els.reviewYearTextFilter.addEventListener('input', renderWrongList);
   els.clearSolvedWrongBtn.addEventListener('click', async () => {
     for (const p of state.problems) {
       if (p.wrongActive && (p.correctStreak || 0) >= WRONG_CLEAR_STREAK) {
