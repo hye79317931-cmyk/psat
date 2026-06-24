@@ -9,7 +9,7 @@ const SYNC_CONFIG_KEY = 'psat-sync-config';
 const SYNC_TOMBSTONES_KEY = 'psat-sync-tombstones';
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const SUBJECT_GROUPS = ['언어', '자료', '상황'];
-const PAUSED_SESSION_KEY = 'psat-paused-session-v18';
+const PAUSED_SESSION_KEY = 'psat-paused-session-v20';
 
 const $ = (id) => document.getElementById(id);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -81,6 +81,8 @@ const els = {
   previewExplanationImage: $('previewExplanationImage'),
   detectAnswerBtn: $('detectAnswerBtn'),
   answerDetectStatus: $('answerDetectStatus'),
+  toggleExplanationTextBtn: $('toggleExplanationTextBtn'),
+  explanationTextWrap: $('explanationTextWrap'),
   explanationPasteZone: $('explanationPasteZone'),
   pasteExplanationBtn: $('pasteExplanationBtn'),
   clearExplanationImageBtn: $('clearExplanationImageBtn'),
@@ -1259,9 +1261,11 @@ function renderProblemList() {
     els.problemList.innerHTML = '<p class="hint">표시할 문제가 없어.</p>';
     return;
   }
-  for (const p of list) {
-    els.problemList.appendChild(problemItem(p, false));
-  }
+  list.forEach((p, index) => {
+    // 아래쪽부터 1번으로 보이도록: 맨 아래 항목 = 1번
+    const displayNumber = list.length - index;
+    els.problemList.appendChild(problemItem(p, false, displayNumber));
+  });
 }
 
 function renderWrongList() {
@@ -1277,16 +1281,15 @@ function renderWrongList() {
   }
 }
 
-function problemItem(p, wrongOnly) {
+function problemItem(p, wrongOnly, displayNumber = '') {
   const div = document.createElement('article');
-  div.className = wrongOnly ? 'item' : 'item reorderable';
+  div.className = wrongOnly ? 'item' : 'item numbered';
   div.dataset.id = p.id;
-  if (!wrongOnly) div.draggable = true;
   const streak = p.wrongActive ? `오답해제까지 ${Math.max(0, WRONG_CLEAR_STREAK - (p.correctStreak || 0))}회 정답 필요` : '오답 아님';
   const hasExpImage = p.explanationImageData ? ' · 해설이미지 있음' : '';
-  const dragHandle = wrongOnly ? '' : '<button data-action="dragHandle" class="drag-handle" type="button" title="길게 눌러 끌어서 순서 변경" aria-label="길게 눌러 끌어서 순서 변경">↕</button>';
+  const numberBadge = wrongOnly ? '' : `<div class="list-number" aria-label="문제 번호">${displayNumber}</div>`;
   div.innerHTML = `
-    ${dragHandle}
+    ${numberBadge}
     <img src="${p.imageData}" alt="문제 썸네일">
     <div>
       <h3>${escapeHtml(canonicalSubject(p.subject))}${normalizedYear(p.year) ? ` · ${escapeHtml(normalizedYear(p.year))}` : ''} · 정답 ${choiceLabel(p.answer)}</h3>
@@ -1303,15 +1306,6 @@ function problemItem(p, wrongOnly) {
     </div>
   `;
   div.addEventListener('click', handleItemClick);
-  if (!wrongOnly) {
-    div.addEventListener('dragstart', handleListDragStart);
-    div.addEventListener('dragover', handleListDragOver);
-    div.addEventListener('dragleave', handleListDragLeave);
-    div.addEventListener('drop', handleListDrop);
-    div.addEventListener('dragend', clearListDragClasses);
-    const handle = div.querySelector('.drag-handle');
-    if (handle) handle.addEventListener('pointerdown', handleReorderPointerDown);
-  }
   return div;
 }
 
@@ -1581,6 +1575,18 @@ function setAnswerDetectStatus(message) {
   if (els.answerDetectStatus) els.answerDetectStatus.textContent = message || '';
 }
 
+function setExplanationTextOpen(open) {
+  if (!els.explanationTextWrap || !els.toggleExplanationTextBtn) return;
+  els.explanationTextWrap.classList.toggle('hidden', !open);
+  els.toggleExplanationTextBtn.textContent = open ? '해설 텍스트 입력 닫기' : '해설 텍스트 입력 열기';
+  if (open) setTimeout(() => els.explanationInput?.focus(), 0);
+}
+
+function toggleExplanationText() {
+  if (!els.explanationTextWrap) return;
+  setExplanationTextOpen(els.explanationTextWrap.classList.contains('hidden'));
+}
+
 function normalizeAnswerText(text) {
   return String(text || '')
     .replace(/[①❶➀⓵]/g, '1')
@@ -1700,8 +1706,8 @@ async function detectAnswerFromExplanationImage(manual = false) {
 }
 
 function scheduleAnswerDetection() {
+  // v20: 해설 스크린샷 자동 정답 인식은 제거하고, 정답은 ①~⑤ 직접 지정만 사용합니다.
   clearTimeout(state.answerDetectTimer);
-  state.answerDetectTimer = setTimeout(() => detectAnswerFromExplanationImage(false), 400);
 }
 
 function setFormImage(target, dataUrl) {
@@ -1780,7 +1786,7 @@ function resetForm() {
   updateFormModeUi();
   clearFormImage('problem');
   clearFormImage('explanation');
-  setAnswerDetectStatus('해설 스샷을 붙이면 오른쪽 위 정답칸을 먼저 읽습니다.');
+  setExplanationTextOpen(false);
   els.imageInput.required = false;
   setPasteTarget('problem');
 }
@@ -1797,6 +1803,7 @@ function editProblem(p, options = {}) {
   els.answerInput.value = String(p.answer || 1);
   if (els.difficultyInput) els.difficultyInput.value = p.difficulty || '중';
   els.explanationInput.value = p.explanation || '';
+  setExplanationTextOpen(!!(p.explanation || '').trim());
   if (els.tagsInput) els.tagsInput.value = (p.tags || []).join(', ');
   saveFormPreferences();
   els.imageInput.value = '';
@@ -2220,15 +2227,13 @@ async function imageFileInputChanged(target, input) {
   showToast('이미지 처리 중...');
   const data = await fileToDataUrl(file);
   if (target === 'explanation') {
-    const visual = await detectAnswerVisuallyFromBlob(file);
-    state.formExplanationVisualAnswer = visual.answer || 0;
-    state.formExplanationVisualConfidence = visual.confidence || 0;
-    state.formExplanationOcrCandidates = await imageBlobToAnswerOcrCandidates(file);
-    state.formExplanationOcrData = state.formExplanationOcrCandidates[0] || '';
+    state.formExplanationVisualAnswer = 0;
+    state.formExplanationVisualConfidence = 0;
+    state.formExplanationOcrCandidates = [];
+    state.formExplanationOcrData = '';
   }
   setFormImage(target, data);
   setPasteTarget(target);
-  if (target === 'explanation') scheduleAnswerDetection();
   showToast(`${target === 'problem' ? '문제 이미지' : '해설 이미지'}를 넣었어 · ${sizeToastPrefix(data)}`);
 }
 
@@ -2243,15 +2248,13 @@ async function pasteImageFromClipboardEvent(event, explicitTarget = '') {
   showToast('스크린샷 처리 중...');
   const data = await fileToDataUrl(file);
   if (target === 'explanation') {
-    const visual = await detectAnswerVisuallyFromBlob(file);
-    state.formExplanationVisualAnswer = visual.answer || 0;
-    state.formExplanationVisualConfidence = visual.confidence || 0;
-    state.formExplanationOcrCandidates = await imageBlobToAnswerOcrCandidates(file);
-    state.formExplanationOcrData = state.formExplanationOcrCandidates[0] || '';
+    state.formExplanationVisualAnswer = 0;
+    state.formExplanationVisualConfidence = 0;
+    state.formExplanationOcrCandidates = [];
+    state.formExplanationOcrData = '';
   }
   setFormImage(target, data);
   setPasteTarget(target);
-  if (target === 'explanation') scheduleAnswerDetection();
   showToast(`${target === 'problem' ? '문제 스샷' : '해설 스샷'}을 붙여넣었어 · ${sizeToastPrefix(data)}`);
   return true;
 }
@@ -2271,14 +2274,12 @@ async function pasteImageWithClipboardApi(target) {
       showToast('스크린샷 처리 중...');
       const data = await imageBlobToDataUrl(blob);
       if (target === 'explanation') {
-        const visual = await detectAnswerVisuallyFromBlob(blob);
-        state.formExplanationVisualAnswer = visual.answer || 0;
-        state.formExplanationVisualConfidence = visual.confidence || 0;
-        state.formExplanationOcrCandidates = await imageBlobToAnswerOcrCandidates(blob);
-        state.formExplanationOcrData = state.formExplanationOcrCandidates[0] || '';
+        state.formExplanationVisualAnswer = 0;
+        state.formExplanationVisualConfidence = 0;
+        state.formExplanationOcrCandidates = [];
+        state.formExplanationOcrData = '';
       }
       setFormImage(target, data);
-      if (target === 'explanation') scheduleAnswerDetection();
       showToast(`${target === 'problem' ? '문제 스샷' : '해설 스샷'}을 붙여넣었어 · ${sizeToastPrefix(data)}`);
       return;
     }
@@ -2802,7 +2803,6 @@ function setManualAnswer(value) {
   const answer = Number(value);
   if (answer < 1 || answer > 5) return;
   els.answerInput.value = String(answer);
-  setAnswerDetectStatus(`정답 ${choiceLabel(answer)} 직접 지정됨`);
   showToast(`정답 ${choiceLabel(answer)}로 지정했어`);
 }
 
@@ -2918,7 +2918,7 @@ function bindEvents() {
   if (els.subjectInput) els.subjectInput.addEventListener('change', saveFormPreferences);
   if (els.yearInput) els.yearInput.addEventListener('input', saveFormPreferences);
   if (els.imageQualityInput) els.imageQualityInput.addEventListener('change', saveFormPreferences);
-  if (els.detectAnswerBtn) els.detectAnswerBtn.addEventListener('click', () => detectAnswerFromExplanationImage(true));
+  if (els.toggleExplanationTextBtn) els.toggleExplanationTextBtn.addEventListener('click', toggleExplanationText);
   els.manualAnswerBtns.forEach((btn) => btn.addEventListener('click', () => setManualAnswer(btn.dataset.answer)));
   els.imageInput.addEventListener('change', () => imageFileInputChanged('problem', els.imageInput));
   els.explanationImageInput.addEventListener('change', () => imageFileInputChanged('explanation', els.explanationImageInput));

@@ -1339,3 +1339,44 @@ body.reorder-active * {
 .item.reorderable.drop-after {
   box-shadow: 0 5px 0 var(--accent), 0 10px 24px rgba(0,0,0,.10);
 }
+
+
+/* v20: 직접 정답 지정, 해설 텍스트 접기, 목록 번호 표시 */
+.text-toggle-btn {
+  margin: 2px 0 10px;
+}
+.item.numbered {
+  grid-template-columns: 42px 82px 1fr;
+  align-items: start;
+}
+.list-number {
+  width: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(125,211,252,.10);
+  border: 1px solid rgba(125,211,252,.25);
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 900;
+}
+@media (max-width: 520px) {
+  .item.numbered {
+    grid-template-columns: 34px 72px 1fr;
+    gap: 8px;
+    padding: 9px;
+  }
+  .item.numbered img {
+    width: 72px;
+    height: 102px;
+  }
+  .list-number {
+    width: 34px;
+    min-width: 34px;
+    min-height: 34px;
+    font-size: 13px;
+  }
+}

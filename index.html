@@ -13,7 +13,7 @@
   <header class="app-header">
     <div>
       <h1>PSAT 랜덤 오답노트</h1>
-      <p>PSAT 언어·자료·상황 · 연도/회차 분류 · 랜덤 세트 · 순서변경 개선 · 일괄수정 · 빠른 정답지정</p>
+      <p>PSAT 언어·자료·상황 · 연도/회차 분류 · 랜덤 세트 · 목록 번호 · 일괄수정 · 직접 정답지정</p>
     </div>
     <button id="installBtn" class="ghost hidden" type="button">홈화면 설치</button>
   </header>
@@ -204,12 +204,8 @@
             <button id="clearExplanationImageBtn" class="secondary" type="button">해설 이미지 비우기</button>
           </div>
           <img id="previewExplanationImage" class="preview hidden" alt="해설 이미지 미리보기" />
-          <div class="answer-detect-row">
-            <button id="detectAnswerBtn" class="secondary" type="button">해설에서 정답 자동인식</button>
-            <span id="answerDetectStatus" class="detect-status">해설 스샷을 붙이면 정답 인식을 시도합니다.</span>
-          </div>
-          <div class="quick-answer-row" aria-label="정답 빠른 지정">
-            <span>인식 안 되면 바로 지정:</span>
+          <div class="quick-answer-row" aria-label="정답 직접 지정">
+            <span>정답 직접 지정:</span>
             <button class="manual-answer" data-answer="1" type="button">①</button>
             <button class="manual-answer" data-answer="2" type="button">②</button>
             <button class="manual-answer" data-answer="3" type="button">③</button>
@@ -217,8 +213,9 @@
             <button class="manual-answer" data-answer="5" type="button">⑤</button>
           </div>
 
-          <label>해설 텍스트
-            <textarea id="explanationInput" rows="5" placeholder="해설 이미지만 저장해도 되고, 필요한 메모를 추가로 적어도 됩니다."></textarea>
+          <button id="toggleExplanationTextBtn" class="secondary text-toggle-btn" type="button">해설 텍스트 입력 열기</button>
+          <label id="explanationTextWrap" class="hidden">해설 텍스트
+            <textarea id="explanationInput" rows="5" placeholder="필요할 때만 눌러서 해설 메모를 입력합니다."></textarea>
           </label>
           <input id="tagsInput" type="hidden" value="" />
           <div class="row wrap form-action-row">
@@ -270,7 +267,7 @@
             </label>
           </div>
           <button id="bulkYearApplyBtn" class="secondary" type="button">연도/회차 일괄 변경</button>
-          <p class="hint">왼쪽 ↕ 손잡이를 길게 누르고 끌면 현재 목록 안에서 문제 순서를 바꿀 수 있어.</p>
+          <p class="hint">목록 번호는 아래쪽부터 1번으로 표시돼. 순서 변경은 위/아래 버튼으로 할 수 있어.</p>
         </section>
         <div id="problemList" class="list"></div>
       </section>
@@ -299,7 +296,6 @@
   </main>
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="app.js?v=19"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>
