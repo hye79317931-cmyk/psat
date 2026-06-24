@@ -9,6 +9,7 @@ const SYNC_CONFIG_KEY = 'psat-sync-config';
 const SYNC_TOMBSTONES_KEY = 'psat-sync-tombstones';
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const SUBJECT_GROUPS = ['언어', '자료', '상황'];
+const PAUSED_SESSION_KEY = 'psat-paused-session-v14';
 
 const $ = (id) => document.getElementById(id);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -75,6 +76,8 @@ const els = {
   clearProblemImageBtn: $('clearProblemImageBtn'),
   explanationImageInput: $('explanationImageInput'),
   previewExplanationImage: $('previewExplanationImage'),
+  detectAnswerBtn: $('detectAnswerBtn'),
+  answerDetectStatus: $('answerDetectStatus'),
   explanationPasteZone: $('explanationPasteZone'),
   pasteExplanationBtn: $('pasteExplanationBtn'),
   clearExplanationImageBtn: $('clearExplanationImageBtn'),
@@ -131,9 +134,13 @@ const state = {
   activePasteTarget: 'problem',
   formProblemImageData: '',
   formExplanationImageData: '',
+  formExplanationOcrData: '',
+  lastOcrText: '',
   autoFitOnImageLoad: false,
   solveFullscreenActive: false,
   saveBusy: false,
+  answerDetectRunning: false,
+  answerDetectTimer: null,
   syncConfig: null,
   syncTimer: null,
   syncDebounceTimer: null,
@@ -412,7 +419,105 @@ function filterProblems(mode, subject, year = '') {
   });
 }
 
+function readPausedSession() {
+  try {
+    return JSON.parse(localStorage.getItem(PAUSED_SESSION_KEY) || 'null');
+  } catch (err) {
+    return null;
+  }
+}
+
+function clearPausedSession() {
+  localStorage.removeItem(PAUSED_SESSION_KEY);
+  updateContinueButton();
+}
+
+function updateContinueButton() {
+  if (!els.continueBtn) return;
+  const paused = readPausedSession();
+  els.continueBtn.textContent = paused ? '중단한 세트 이어풀기' : '마지막 문제 계속';
+}
+
+function buildPausedSessionSnapshot() {
+  if (!state.session || !state.current) return null;
+  const now = Date.now();
+  return {
+    savedAt: now,
+    queueIds: state.queue.map((p) => p.id),
+    queueIndex: state.queueIndex,
+    currentId: state.current.id,
+    questionElapsed: Math.max(0, now - state.questionStart),
+    sessionElapsed: Math.max(0, now - state.session.startedAt),
+    remainingMs: state.session.endAt ? Math.max(0, state.session.endAt - now) : 0,
+    session: {
+      label: state.session.label || '중단한 풀이',
+      total: state.session.total || state.queue.length,
+      answered: state.session.answered || 0,
+      correct: state.session.correct || 0,
+      problemIds: [...(state.session.problemIds || state.queue.map((p) => p.id))],
+      answeredIds: [...(state.session.answeredIds || [])],
+      wrongIds: [...(state.session.wrongIds || [])]
+    }
+  };
+}
+
+async function pauseCurrentSession() {
+  if (!state.current) {
+    stopTimer();
+    await exitSolveFullscreen();
+    return;
+  }
+  stopTimer();
+  await saveInkToCurrentProblem(true);
+  const snapshot = buildPausedSessionSnapshot();
+  if (snapshot) localStorage.setItem(PAUSED_SESSION_KEY, JSON.stringify(snapshot));
+  state.questionStart = 0;
+  state.current = null;
+  state.session = null;
+  els.solvePanel.classList.add('hidden');
+  await exitSolveFullscreen();
+  updateContinueButton();
+  showToast('문제풀이를 중단했어. 푼 부분은 저장됐어.');
+}
+
+function resumePausedSession() {
+  const paused = readPausedSession();
+  if (!paused) return false;
+  const queue = (paused.queueIds || []).map((id) => state.problems.find((p) => p.id === id)).filter(Boolean);
+  if (!queue.length) {
+    clearPausedSession();
+    showToast('이어 풀 문제가 없어');
+    return true;
+  }
+  clearTimeout(state.autoNextTimer);
+  state.autoNextTimer = null;
+  state.queue = queue;
+  state.queueIndex = Math.min(Math.max(Number(paused.queueIndex || 0), 0), queue.length - 1);
+  const savedSession = paused.session || {};
+  const now = Date.now();
+  state.session = {
+    label: savedSession.label || '중단한 풀이',
+    startedAt: now - Math.max(0, Number(paused.sessionElapsed || 0)),
+    endAt: paused.remainingMs ? now + Math.max(0, Number(paused.remainingMs || 0)) : 0,
+    total: savedSession.total || queue.length,
+    answered: savedSession.answered || 0,
+    correct: savedSession.correct || 0,
+    elapsedOnFinish: 0,
+    problemIds: savedSession.problemIds?.length ? [...savedSession.problemIds] : queue.map((p) => p.id),
+    answeredIds: [...(savedSession.answeredIds || [])],
+    wrongIds: [...(savedSession.wrongIds || [])]
+  };
+  const current = state.problems.find((p) => p.id === paused.currentId) || queue[state.queueIndex];
+  loadCurrentProblem(current);
+  state.questionStart = Date.now() - Math.max(0, Number(paused.questionElapsed || 0));
+  updateTimers();
+  switchView('solveView');
+  showToast('중단한 부분부터 이어풀기');
+  return true;
+}
+
 function startSession(problems, options = {}) {
+  clearPausedSession();
   if (!problems.length) {
     showToast('해당 조건의 문제가 없어');
     return;
@@ -442,6 +547,7 @@ function startSession(problems, options = {}) {
 }
 
 function startDirectProblem(problem) {
+  clearPausedSession();
   clearTimeout(state.autoNextTimer);
   state.autoNextTimer = null;
   if (els.sessionSummary) els.sessionSummary.classList.add('hidden');
@@ -499,8 +605,21 @@ function startTimer() {
   state.timerId = setInterval(updateTimers, 300);
 }
 
+function stopTimer() {
+  clearInterval(state.timerId);
+  state.timerId = null;
+  clearTimeout(state.autoNextTimer);
+  state.autoNextTimer = null;
+}
+
 function updateTimers() {
-  if (!state.current || !state.questionStart) return;
+  if (!state.current || !state.questionStart) {
+    if (state.timerId) {
+      clearInterval(state.timerId);
+      state.timerId = null;
+    }
+    return;
+  }
   const questionText = formatTime(Date.now() - state.questionStart);
   if (els.questionTimer) els.questionTimer.textContent = questionText;
   if (els.leftQuestionTimer) els.leftQuestionTimer.textContent = questionText;
@@ -650,10 +769,7 @@ function finishSession(timeout) {
   const session = state.session;
   const elapsed = Date.now() - session.startedAt;
   session.elapsedOnFinish = elapsed;
-  clearTimeout(state.autoNextTimer);
-  state.autoNextTimer = null;
-  clearInterval(state.timerId);
-  state.timerId = null;
+  stopTimer();
   state.current = null;
   exitSolveFullscreen();
   els.solvePanel.classList.add('hidden');
@@ -668,6 +784,7 @@ function finishSession(timeout) {
     wrongIds: [...(session.wrongIds || [])]
   };
   state.session = null;
+  clearPausedSession();
   renderSessionSummary();
   showToast(timeout ? '제한시간이 끝났어' : '세션 완료');
 }
@@ -1236,6 +1353,104 @@ function setPasteTarget(target) {
   els.explanationPasteZone.classList.toggle('active-paste', target === 'explanation');
 }
 
+function setAnswerDetectStatus(message) {
+  if (els.answerDetectStatus) els.answerDetectStatus.textContent = message || '';
+}
+
+function normalizeAnswerText(text) {
+  return String(text || '')
+    .replace(/[①❶➀⓵]/g, '1')
+    .replace(/[②❷➁⓶]/g, '2')
+    .replace(/[③❸➂⓷]/g, '3')
+    .replace(/[④❹➃⓸]/g, '4')
+    .replace(/[⑤❺➄⓹]/g, '5')
+    .replace(/[⑴㈠]/g, '1')
+    .replace(/[⑵㈡]/g, '2')
+    .replace(/[⑶㈢]/g, '3')
+    .replace(/[⑷㈣]/g, '4')
+    .replace(/[⑸㈤]/g, '5')
+    .replace(/［|\[/g, '[')
+    .replace(/］|\]/g, ']')
+    .replace(/[：﹕]/g, ':')
+    .replace(/[|]/g, '1')
+    .replace(/Ｏ|〇|○/g, '0');
+}
+
+function extractAnswerNumberFromText(rawText) {
+  const text = normalizeAnswerText(rawText);
+  const compact = text.replace(/\s+/g, ' ');
+  const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const keywordPatterns = [
+    /(?:정\s*답|정답|해\s*답|해답|답안|답|answer|ans)[^1-5]{0,40}([1-5])\s*(?:번|[.)\]】〉>]|$)?/i,
+    /(?:정\s*답|정답|해\s*답|해답|답안|답)[^\n]{0,60}?([1-5])/i,
+    /(?:^|\n|\s)([1-5])\s*번\s*(?:이|가)?\s*(?:정\s*답|정답|답)/i,
+    /(?:correct\s*answer|answer)\s*[:：]?\s*([1-5])/i
+  ];
+  for (const pattern of keywordPatterns) {
+    const match = compact.match(pattern) || text.match(pattern);
+    if (match && match[1]) return Number(match[1]);
+  }
+
+  // OCR이 줄바꿈을 살린 경우: '정답'이 들어간 줄과 그 다음 줄만 좁혀서 재검색
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!/(정\s*답|정답|해\s*답|해답|답안|answer|ans)/i.test(lines[i])) continue;
+    const windowText = [lines[i], lines[i + 1] || ''].join(' ');
+    const m = windowText.match(/([1-5])\s*(?:번|[.)\]】〉>]|$)?/);
+    if (m) return Number(m[1]);
+  }
+
+  return 0;
+}
+
+async function detectAnswerFromExplanationImage(manual = false) {
+  const dataUrl = state.formExplanationOcrData || state.formExplanationImageData;
+  if (!dataUrl) {
+    if (manual) showToast('해설 이미지를 먼저 넣어줘');
+    setAnswerDetectStatus('해설 이미지가 아직 없어.');
+    return;
+  }
+  if (state.answerDetectRunning) return;
+  if (!window.Tesseract || !window.Tesseract.recognize) {
+    const msg = 'OCR 로딩 전이야. 인터넷 연결 후 잠시 뒤 다시 눌러줘.';
+    setAnswerDetectStatus(msg);
+    if (manual) showToast(msg);
+    return;
+  }
+  state.answerDetectRunning = true;
+  setAnswerDetectStatus('정답 인식 중... 조금 걸릴 수 있어.');
+  try {
+    const result = await window.Tesseract.recognize(dataUrl, 'kor+eng', {
+      logger: (m) => {
+        if (!m || m.status !== 'recognizing text') return;
+        const pct = Math.round((m.progress || 0) * 100);
+        setAnswerDetectStatus(`정답 인식 중... ${pct}%`);
+      }
+    });
+    const text = result?.data?.text || '';
+    state.lastOcrText = text;
+    const answer = extractAnswerNumberFromText(text);
+    if (answer >= 1 && answer <= 5) {
+      els.answerInput.value = String(answer);
+      setAnswerDetectStatus(`정답 ${choiceLabel(answer)} 자동 입력됨`);
+      showToast(`정답 ${choiceLabel(answer)} 자동 입력됨`);
+    } else {
+      setAnswerDetectStatus('정답 자동인식 실패. 해설 이미지에서 정답 부분이 작거나 흐리면 직접 선택해줘.');
+      if (manual) showToast('정답을 못 찾았어. 직접 선택해줘.');
+    }
+  } catch (err) {
+    console.warn('Answer OCR failed', err);
+    setAnswerDetectStatus('정답 인식 실패. 직접 선택해줘.');
+    if (manual) showToast('정답 인식 실패. 직접 선택해줘.');
+  } finally {
+    state.answerDetectRunning = false;
+  }
+}
+
+function scheduleAnswerDetection() {
+  clearTimeout(state.answerDetectTimer);
+  state.answerDetectTimer = setTimeout(() => detectAnswerFromExplanationImage(false), 400);
+}
+
 function setFormImage(target, dataUrl) {
   if (target === 'problem') {
     state.formProblemImageData = dataUrl;
@@ -1256,6 +1471,8 @@ function clearFormImage(target) {
     els.previewImage.classList.add('hidden');
   } else {
     state.formExplanationImageData = '';
+    state.formExplanationOcrData = '';
+    state.lastOcrText = '';
     els.explanationImageInput.value = '';
     els.previewExplanationImage.src = '';
     els.previewExplanationImage.classList.add('hidden');
@@ -1278,6 +1495,7 @@ function resetForm() {
   els.formTitle.textContent = '문제 등록';
   clearFormImage('problem');
   clearFormImage('explanation');
+  setAnswerDetectStatus('해설 스샷을 붙이면 정답 인식을 시도합니다.');
   els.imageInput.required = false;
   setPasteTarget('problem');
 }
@@ -1296,7 +1514,10 @@ function editProblem(p) {
   els.imageInput.value = '';
   els.explanationImageInput.value = '';
   setFormImage('problem', p.imageData || '');
-  if (p.explanationImageData) setFormImage('explanation', p.explanationImageData);
+  if (p.explanationImageData) {
+    state.formExplanationOcrData = p.explanationImageData;
+    setFormImage('explanation', p.explanationImageData);
+  }
   else clearFormImage('explanation');
   els.imageInput.required = false;
   setPasteTarget('problem');
@@ -1388,6 +1609,48 @@ async function imageBlobToDataUrl(blob) {
   }
 }
 
+
+async function imageBlobToOcrDataUrl(blob) {
+  try {
+    const img = await blobToImage(blob);
+    const originalWidth = img.naturalWidth || img.width;
+    const originalHeight = img.naturalHeight || img.height;
+    if (!originalWidth || !originalHeight) return blobToDataUrl(blob);
+
+    // 저장용 이미지는 압축해도, OCR용 이미지는 별도로 확대·흑백화해서 인식률을 높입니다.
+    const targetWidth = Math.min(3400, Math.max(2400, originalWidth));
+    const scale = targetWidth / originalWidth;
+    const width = Math.max(1, Math.round(originalWidth * scale));
+    const height = Math.max(1, Math.round(originalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true, alpha: false });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const d = imageData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+      const boosted = gray < 185 ? Math.max(0, gray * 0.45) : Math.min(255, 245 + (gray - 185) * 0.35);
+      d[i] = boosted;
+      d[i + 1] = boosted;
+      d[i + 2] = boosted;
+      d[i + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    const out = await canvasToBlob(canvas, 'image/png', 1);
+    return out ? blobToDataUrl(out) : blobToDataUrl(blob);
+  } catch (err) {
+    console.warn('OCR image preprocessing failed', err);
+    return blobToDataUrl(blob);
+  }
+}
+
 async function fileToDataUrl(file) {
   return imageBlobToDataUrl(file);
 }
@@ -1401,8 +1664,10 @@ async function imageFileInputChanged(target, input) {
   if (!file) return;
   showToast('이미지 처리 중...');
   const data = await fileToDataUrl(file);
+  if (target === 'explanation') state.formExplanationOcrData = await imageBlobToOcrDataUrl(file);
   setFormImage(target, data);
   setPasteTarget(target);
+  if (target === 'explanation') scheduleAnswerDetection();
   showToast(`${target === 'problem' ? '문제 이미지' : '해설 이미지'}를 넣었어 · ${sizeToastPrefix(data)}`);
 }
 
@@ -1416,8 +1681,10 @@ async function pasteImageFromClipboardEvent(event, explicitTarget = '') {
   if (!file) return false;
   showToast('스크린샷 처리 중...');
   const data = await fileToDataUrl(file);
+  if (target === 'explanation') state.formExplanationOcrData = await imageBlobToOcrDataUrl(file);
   setFormImage(target, data);
   setPasteTarget(target);
+  if (target === 'explanation') scheduleAnswerDetection();
   showToast(`${target === 'problem' ? '문제 스샷' : '해설 스샷'}을 붙여넣었어 · ${sizeToastPrefix(data)}`);
   return true;
 }
@@ -1436,7 +1703,9 @@ async function pasteImageWithClipboardApi(target) {
       const blob = await item.getType(type);
       showToast('스크린샷 처리 중...');
       const data = await imageBlobToDataUrl(blob);
+      if (target === 'explanation') state.formExplanationOcrData = await imageBlobToOcrDataUrl(blob);
       setFormImage(target, data);
+      if (target === 'explanation') scheduleAnswerDetection();
       showToast(`${target === 'problem' ? '문제 스샷' : '해설 스샷'}을 붙여넣었어 · ${sizeToastPrefix(data)}`);
       return;
     }
@@ -1530,7 +1799,7 @@ async function exportData() {
   const history = await getAll(STORES.history);
   const payload = {
     app: 'PSAT 랜덤 오답노트',
-    version: 12,
+    version: 14,
     exportedAt: new Date().toISOString(),
     problems,
     history
@@ -1953,6 +2222,7 @@ function bindEvents() {
   if (els.yearFilter) els.yearFilter.addEventListener('change', () => {});
 
   els.continueBtn.addEventListener('click', () => {
+    if (resumePausedSession()) return;
     const id = localStorage.getItem('psat-last-problem-id');
     const p = state.problems.find((item) => item.id === id);
     if (!p) {
@@ -1987,10 +2257,7 @@ function bindEvents() {
   els.penBtn.addEventListener('click', () => setDrawTool('pen'));
   els.eraserBtn.addEventListener('click', () => setDrawTool('eraser'));
   els.clearInkBtn.addEventListener('click', clearInk);
-  if (els.exitSolveBtn) els.exitSolveBtn.addEventListener('click', async () => {
-    await saveInkToCurrentProblem(true);
-    await exitSolveFullscreen();
-  });
+  if (els.exitSolveBtn) els.exitSolveBtn.addEventListener('click', pauseCurrentSession);
   els.penSize.addEventListener('input', updateSizeLabels);
   els.eraserSize.addEventListener('input', updateSizeLabels);
   els.zoomOutBtn.addEventListener('click', () => zoomFromCenter(state.zoom <= 0.35 ? -0.05 : -0.20));
@@ -2017,6 +2284,7 @@ function bindEvents() {
   if (els.subjectInput) els.subjectInput.addEventListener('change', saveFormPreferences);
   if (els.yearInput) els.yearInput.addEventListener('input', saveFormPreferences);
   if (els.imageQualityInput) els.imageQualityInput.addEventListener('change', saveFormPreferences);
+  if (els.detectAnswerBtn) els.detectAnswerBtn.addEventListener('click', () => detectAnswerFromExplanationImage(true));
   els.imageInput.addEventListener('change', () => imageFileInputChanged('problem', els.imageInput));
   els.explanationImageInput.addEventListener('change', () => imageFileInputChanged('explanation', els.explanationImageInput));
   els.problemPasteZone.addEventListener('click', () => setPasteTarget('problem'));
@@ -2081,6 +2349,7 @@ async function init() {
   localStorage.removeItem('psat-sync-tombstones');
   await openDb();
   await refresh();
+  updateContinueButton();
   await registerServiceWorker();
 }
 

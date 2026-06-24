@@ -7,13 +7,13 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="assets/icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=12" />
+  <link rel="stylesheet" href="styles.css?v=14" />
 </head>
 <body>
   <header class="app-header">
     <div>
       <h1>PSAT 랜덤 오답노트</h1>
-      <p>PSAT 언어·자료·상황 · 연도별 분류 · 랜덤 세트 · 자동 다음문제 · 오답/전체 다시보기</p>
+      <p>PSAT 언어·자료·상황 · 연도별 분류 · 랜덤 세트 · 자동 다음문제 · 중단저장 · 해설 정답인식</p>
     </div>
     <button id="installBtn" class="ghost hidden" type="button">홈화면 설치</button>
   </header>
@@ -95,7 +95,7 @@
             <strong id="leftQuestionTimer">00:00</strong>
             <span id="leftSessionTimer" class="left-session-timer hidden">세션 00:00</span>
           </div>
-          <button id="exitSolveBtn" class="secondary mini-exit" type="button">나가기</button>
+          <button id="exitSolveBtn" class="secondary mini-exit" type="button">중단/나가기</button>
           <button id="penBtn" class="secondary active-tool" type="button">펜</button>
           <button id="eraserBtn" class="secondary" type="button">지우개</button>
           <label class="compact range-control">펜 크기
@@ -204,6 +204,10 @@
             <button id="clearExplanationImageBtn" class="secondary" type="button">해설 이미지 비우기</button>
           </div>
           <img id="previewExplanationImage" class="preview hidden" alt="해설 이미지 미리보기" />
+          <div class="answer-detect-row">
+            <button id="detectAnswerBtn" class="secondary" type="button">해설에서 정답 자동인식</button>
+            <span id="answerDetectStatus" class="detect-status">해설 스샷을 붙이면 정답 인식을 시도합니다.</span>
+          </div>
 
           <label>해설 텍스트
             <textarea id="explanationInput" rows="5" placeholder="해설 이미지만 저장해도 되고, 필요한 메모를 추가로 적어도 됩니다."></textarea>
@@ -269,6 +273,7 @@
   </main>
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-  <script src="app.js?v=12"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="app.js?v=14"></script>
 </body>
 </html>

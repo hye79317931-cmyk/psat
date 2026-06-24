@@ -1214,3 +1214,18 @@ body.solve-active {
   flex: .75 1 54px;
   opacity: .78;
 }
+
+
+.answer-detect-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0 14px;
+}
+.detect-status {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+#detectAnswerBtn { min-height: 38px; }
