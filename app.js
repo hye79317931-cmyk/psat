@@ -156,6 +156,7 @@ const state = {
   answerDetectTimer: null,
   draggingProblemId: '',
   pointerReorder: null,
+  dragAutoScrollRaf: 0,
   syncConfig: null,
   syncTimer: null,
   syncDebounceTimer: null,
@@ -1283,7 +1284,7 @@ function problemItem(p, wrongOnly) {
   if (!wrongOnly) div.draggable = true;
   const streak = p.wrongActive ? `오답해제까지 ${Math.max(0, WRONG_CLEAR_STREAK - (p.correctStreak || 0))}회 정답 필요` : '오답 아님';
   const hasExpImage = p.explanationImageData ? ' · 해설이미지 있음' : '';
-  const dragHandle = wrongOnly ? '' : '<button data-action="dragHandle" class="drag-handle" type="button" title="끌어서 순서 변경" aria-label="끌어서 순서 변경">↕</button>';
+  const dragHandle = wrongOnly ? '' : '<button data-action="dragHandle" class="drag-handle" type="button" title="길게 눌러 끌어서 순서 변경" aria-label="길게 눌러 끌어서 순서 변경">↕</button>';
   div.innerHTML = `
     ${dragHandle}
     <img src="${p.imageData}" alt="문제 썸네일">
@@ -1292,6 +1293,7 @@ function problemItem(p, wrongOnly) {
       <p>풀이 ${p.attempts || 0}회 · 정답률 ${accuracy(p)}% · 평균 ${formatLongTime(averageTime(p))}</p>
       <p>${escapeHtml(streak)}${p.flagged ? ' · 다시보기 지정' : ''}${hasExpImage}</p>
       <div class="item-actions">
+        ${wrongOnly ? '' : `<button data-action="moveUp" data-id="${p.id}" data-context="list" class="secondary order-btn" type="button">위</button><button data-action="moveDown" data-id="${p.id}" data-context="list" class="secondary order-btn" type="button">아래</button>`}
         <button data-action="solve" data-id="${p.id}" data-context="${wrongOnly ? 'wrong' : 'list'}" type="button">풀기</button>
         <button data-action="edit" data-id="${p.id}" data-context="${wrongOnly ? 'wrong' : 'list'}" class="secondary" type="button">수정</button>
         <button data-action="flag" data-id="${p.id}" data-context="${wrongOnly ? 'wrong' : 'list'}" class="secondary" type="button">${p.flagged ? '다시보기 해제' : '다시보기'}</button>
@@ -1360,27 +1362,72 @@ async function handleListDrop(event) {
   await reorderVisibleProblems(fromId, targetId, placement === 'before');
 }
 
+function listReorderItems() {
+  return [...document.querySelectorAll('#problemList .item.reorderable[data-id]')];
+}
+
+function nearestReorderTarget(clientX, clientY, draggedId) {
+  const items = listReorderItems().filter((item) => item.dataset.id !== draggedId);
+  if (!items.length) return null;
+  let best = null;
+  let bestDistance = Infinity;
+  for (const item of items) {
+    const rect = item.getBoundingClientRect();
+    const centerY = rect.top + rect.height / 2;
+    const distance = Math.abs(clientY - centerY);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = { item, before: clientY < centerY };
+    }
+  }
+  return best;
+}
+
+function setReorderDropMarker(target) {
+  listReorderItems().forEach((node) => node.classList.remove('drop-before', 'drop-after'));
+  if (!target?.item) return;
+  target.item.classList.toggle('drop-before', target.before);
+  target.item.classList.toggle('drop-after', !target.before);
+}
+
+function maybeAutoScrollList(clientY) {
+  const scroller = document.scrollingElement || document.documentElement;
+  const edge = Math.min(96, window.innerHeight * 0.18);
+  let delta = 0;
+  if (clientY < edge) delta = -14;
+  else if (clientY > window.innerHeight - edge) delta = 14;
+  if (!delta) return;
+  scroller.scrollBy({ top: delta, left: 0, behavior: 'auto' });
+}
+
 function handleReorderPointerDown(event) {
-  const item = event.currentTarget.closest('.item[data-id]');
+  const item = event.currentTarget.closest('#problemList .item.reorderable[data-id]');
   if (!item) return;
-  state.pointerReorder = { id: item.dataset.id, targetId: '', before: true };
+  state.pointerReorder = {
+    id: item.dataset.id,
+    targetId: '',
+    before: true,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY
+  };
   state.draggingProblemId = item.dataset.id;
   item.classList.add('dragging');
+  document.body.classList.add('reorder-active');
   event.currentTarget.setPointerCapture?.(event.pointerId);
   event.preventDefault();
 }
 
 function handleReorderPointerMove(event) {
   if (!state.pointerReorder) return;
-  const el = document.elementFromPoint(event.clientX, event.clientY);
-  const item = el?.closest?.('.item[data-id]');
-  $$('.item').forEach((node) => node.classList.remove('drop-before', 'drop-after'));
-  if (!item || item.dataset.id === state.pointerReorder.id) return;
-  const before = dropPlacement(event, item) === 'before';
-  state.pointerReorder.targetId = item.dataset.id;
-  state.pointerReorder.before = before;
-  item.classList.toggle('drop-before', before);
-  item.classList.toggle('drop-after', !before);
+  const draggedId = state.pointerReorder.id;
+  const target = nearestReorderTarget(event.clientX, event.clientY, draggedId);
+  setReorderDropMarker(target);
+  if (target?.item) {
+    state.pointerReorder.targetId = target.item.dataset.id;
+    state.pointerReorder.before = target.before;
+  }
+  maybeAutoScrollList(event.clientY);
   event.preventDefault();
 }
 
@@ -1388,6 +1435,7 @@ async function handleReorderPointerUp() {
   if (!state.pointerReorder) return;
   const { id, targetId, before } = state.pointerReorder;
   state.pointerReorder = null;
+  document.body.classList.remove('reorder-active');
   clearListDragClasses();
   if (id && targetId && id !== targetId) await reorderVisibleProblems(id, targetId, before);
 }
@@ -1415,6 +1463,18 @@ async function reorderVisibleProblems(fromId, targetId, beforeTarget) {
   }
   await refresh();
   showToast('문제 순서를 바꿨어');
+}
+
+async function moveVisibleProblem(id, delta) {
+  const visible = getVisibleProblemList();
+  const index = visible.findIndex((prob) => prob.id === id);
+  if (index < 0) return;
+  const targetIndex = index + delta;
+  if (targetIndex < 0 || targetIndex >= visible.length) {
+    showToast(delta < 0 ? '이미 맨 위 문제야' : '이미 맨 아래 문제야');
+    return;
+  }
+  await reorderVisibleProblems(id, visible[targetIndex].id, delta < 0);
 }
 
 async function deleteProblemById(id) {
@@ -1459,6 +1519,8 @@ async function handleItemClick(event) {
   if (!p) return;
   const action = btn.dataset.action;
   if (action === 'dragHandle') return;
+  if (action === 'moveUp') { await moveVisibleProblem(id, -1); return; }
+  if (action === 'moveDown') { await moveVisibleProblem(id, 1); return; }
   if (action === 'solve') startDirectProblem(p);
   if (action === 'edit') {
     const sequence = btn.dataset.context === 'wrong'

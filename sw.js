@@ -5,7 +5,7 @@ const ASSETS = [
   './',
   './index.html',
   './styles.css?v=18',
-  './app.js?v=18',
+  './app.js?v=19',
   './manifest.webmanifest',
   './assets/icon-192.png',
   './assets/icon-512.png'
