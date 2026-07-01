@@ -1545,3 +1545,13 @@ body.reorder-active * {
   font-size: .72rem;
   padding: 6px 2px 0;
 }
+
+/* === v27 해설보기 줌/이동 재수정 === */
+.exp-zoom-toolbar.v27{display:flex!important;flex-wrap:nowrap!important;gap:5px!important;align-items:center!important;margin:0 0 8px!important;overflow-x:auto!important;scrollbar-width:none!important}
+.exp-zoom-toolbar.v27::-webkit-scrollbar{display:none!important}
+.exp-zoom-toolbar.v27 .exp-zoom-btn{flex:0 0 auto!important;padding:7px 10px!important;border-radius:999px!important;border:1px solid var(--line)!important;background:rgba(255,255,255,.12)!important;color:var(--text)!important;font-weight:900!important;font-size:.76rem!important}
+.exp-zoom-toolbar.v27 .exp-zoom-label{flex:0 0 auto!important;color:var(--muted)!important;font-size:.75rem!important;font-weight:900!important}
+.exp-zoom-wrap.v27{position:relative!important;width:100%!important;height:min(70vh,620px)!important;max-height:70vh!important;overflow:hidden!important;border-radius:14px!important;border:1px solid var(--line)!important;background:#050b16!important;margin-bottom:10px!important;touch-action:none!important;overscroll-behavior:contain!important;user-select:none!important;-webkit-user-select:none!important}
+.exp-zoom-stage.v27{position:absolute!important;left:0!important;top:0!important;transform-origin:0 0!important;will-change:transform!important;line-height:0!important}
+.exp-zoom-stage.v27 img{display:block!important;max-width:none!important;width:auto!important;height:auto!important;border:0!important;border-radius:0!important;margin:0!important;background:#fff!important;user-select:none!important;-webkit-user-drag:none!important}
+.exp-zoom-hint.v27{color:var(--muted)!important;font-size:.72rem!important;padding:2px 0 0!important}

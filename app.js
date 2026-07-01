@@ -3334,3 +3334,80 @@ function showExplanation() {
 
   els.explanationBox.classList.remove('hidden');
 }
+
+/* === v27 해설보기 줌/이동 확정 수정 === */
+function setupExplanationZoomV27(wrap,stage,img,label){
+  if(!wrap||!stage||!img)return;
+  const z={scale:1,min:1,max:5,x:0,y:0,baseW:1,baseH:1,pointers:new Map(),pinchStartDist:0,pinchStartScale:1,pinchStartX:0,pinchStartY:0,pinchCenter:{x:0,y:0},panStart:null};
+  const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+  function measure(){
+    const rect=wrap.getBoundingClientRect(); const nw=img.naturalWidth||img.width||1, nh=img.naturalHeight||img.height||1;
+    const fit=Math.min(rect.width/nw,1); z.baseW=Math.max(1,Math.round(nw*fit)); z.baseH=Math.max(1,Math.round(nh*fit));
+    img.style.width=z.baseW+"px"; img.style.height=z.baseH+"px"; stage.style.width=z.baseW+"px"; stage.style.height=z.baseH+"px";
+    z.scale=1; z.x=0; z.y=0; apply();
+  }
+  function apply(){
+    const rect=wrap.getBoundingClientRect(); const sw=z.baseW*z.scale, sh=z.baseH*z.scale;
+    z.x=sw<=rect.width?0:clamp(z.x,rect.width-sw,0);
+    z.y=sh<=rect.height?0:clamp(z.y,rect.height-sh,0);
+    stage.style.transform=`translate3d(${z.x}px,${z.y}px,0) scale(${z.scale})`;
+    if(label)label.textContent=Math.round(z.scale*100)+"%";
+  }
+  function zoomAt(next,cx,cy){
+    const rect=wrap.getBoundingClientRect(); const old=z.scale; next=clamp(next,z.min,z.max);
+    const px=(cx??(rect.left+rect.width/2))-rect.left, py=(cy??(rect.top+rect.height/2))-rect.top;
+    const contentX=(px-z.x)/old, contentY=(py-z.y)/old;
+    z.scale=next; z.x=px-contentX*z.scale; z.y=py-contentY*z.scale; apply();
+  }
+  const distance=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+  const center=(a,b)=>({x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2});
+  const two=()=>Array.from(z.pointers.values()).slice(0,2);
+  wrap._expZoomIn=()=>zoomAt(z.scale*1.25);
+  wrap._expZoomOut=()=>zoomAt(z.scale/1.25);
+  wrap._expZoomReset=()=>measure();
+  wrap.addEventListener("pointerdown",e=>{
+    e.preventDefault(); try{wrap.setPointerCapture(e.pointerId)}catch{}
+    z.pointers.set(e.pointerId,{clientX:e.clientX,clientY:e.clientY});
+    if(z.pointers.size===1) z.panStart={clientX:e.clientX,clientY:e.clientY,x:z.x,y:z.y};
+    if(z.pointers.size>=2){const [a,b]=two(); z.pinchStartDist=distance(a,b); z.pinchStartScale=z.scale; z.pinchStartX=z.x; z.pinchStartY=z.y; z.pinchCenter=center(a,b); z.panStart=null;}
+  },{passive:false});
+  wrap.addEventListener("pointermove",e=>{
+    if(!z.pointers.has(e.pointerId))return; e.preventDefault();
+    z.pointers.set(e.pointerId,{clientX:e.clientX,clientY:e.clientY});
+    if(z.pointers.size>=2){
+      const [a,b]=two(); const d=distance(a,b); if(!z.pinchStartDist)return; const c=center(a,b);
+      z.scale=clamp(z.pinchStartScale*(d/z.pinchStartDist),z.min,z.max);
+      const rect=wrap.getBoundingClientRect(); const px=z.pinchCenter.x-rect.left, py=z.pinchCenter.y-rect.top;
+      const ox=(px-z.pinchStartX)/z.pinchStartScale, oy=(py-z.pinchStartY)/z.pinchStartScale;
+      z.x=px-ox*z.scale+(c.x-z.pinchCenter.x); z.y=py-oy*z.scale+(c.y-z.pinchCenter.y); apply(); return;
+    }
+    if(z.panStart){z.x=z.panStart.x+(e.clientX-z.panStart.clientX); z.y=z.panStart.y+(e.clientY-z.panStart.clientY); apply();}
+  },{passive:false});
+  function endPointer(e){z.pointers.delete(e.pointerId); if(z.pointers.size===1){const p=Array.from(z.pointers.values())[0]; z.panStart={clientX:p.clientX,clientY:p.clientY,x:z.x,y:z.y};}else{z.panStart=null;z.pinchStartDist=0;}}
+  wrap.addEventListener("pointerup",endPointer,{passive:false}); wrap.addEventListener("pointercancel",endPointer,{passive:false}); wrap.addEventListener("lostpointercapture",endPointer,{passive:false});
+  img.addEventListener("load",measure,{once:true}); setTimeout(measure,80); window.addEventListener("resize",()=>setTimeout(measure,120));
+}
+function showExplanation(){
+  if(!state.current)return;
+  const hasText=state.current.explanation&&state.current.explanation.trim();
+  const hasImage=state.current.explanationImageData;
+  els.explanationBox.innerHTML="";
+  if(!hasText&&!hasImage){els.explanationBox.textContent="등록된 해설이 없습니다.";}
+  else{
+    if(hasImage){
+      const toolbar=document.createElement("div"); toolbar.className="exp-zoom-toolbar v27";
+      toolbar.innerHTML=`<button class="exp-zoom-btn" type="button" data-exp-zoom="out">축소</button><button class="exp-zoom-btn" type="button" data-exp-zoom="reset">맞춤</button><button class="exp-zoom-btn" type="button" data-exp-zoom="in">확대</button><span class="exp-zoom-label">100%</span>`;
+      const wrap=document.createElement("div"); wrap.className="exp-zoom-wrap v27";
+      const stage=document.createElement("div"); stage.className="exp-zoom-stage v27";
+      const img=document.createElement("img"); img.src=state.current.explanationImageData; img.alt="해설 이미지"; img.className="explanation-image";
+      stage.appendChild(img); wrap.appendChild(stage); els.explanationBox.appendChild(toolbar); els.explanationBox.appendChild(wrap);
+      const label=toolbar.querySelector(".exp-zoom-label"); setupExplanationZoomV27(wrap,stage,img,label);
+      toolbar.querySelector('[data-exp-zoom="in"]').onclick=()=>wrap._expZoomIn?.();
+      toolbar.querySelector('[data-exp-zoom="out"]').onclick=()=>wrap._expZoomOut?.();
+      toolbar.querySelector('[data-exp-zoom="reset"]').onclick=()=>wrap._expZoomReset?.();
+      const hint=document.createElement("div"); hint.className="exp-zoom-hint v27"; hint.textContent="해설 이미지는 두 손가락으로 확대/축소, 확대 후 한 손가락으로 이동"; els.explanationBox.appendChild(hint);
+    }
+    if(hasText){const text=document.createElement("div"); text.className="explanation-text"; text.textContent=state.current.explanation.trim(); els.explanationBox.appendChild(text);}
+  }
+  els.explanationBox.classList.remove("hidden");
+}
