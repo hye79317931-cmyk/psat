@@ -1477,3 +1477,71 @@ body.reorder-active * {
 .review-compare-box span strong {
   color: var(--text);
 }
+
+
+/* === v26 해설보기 손가락 줌인/줌아웃 === */
+.explanation {
+  overflow: hidden;
+}
+.exp-zoom-toolbar {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  align-items: center;
+  margin: 0 0 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.exp-zoom-toolbar::-webkit-scrollbar {
+  display: none;
+}
+.exp-zoom-toolbar button,
+.exp-zoom-toolbar span {
+  flex: 0 0 auto;
+}
+.exp-zoom-btn {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255,255,255,.10);
+  color: var(--text);
+  padding: 6px 10px;
+  font-weight: 900;
+  font-size: .78rem;
+}
+.exp-zoom-label {
+  color: var(--muted);
+  font-size: .76rem;
+  font-weight: 800;
+}
+.exp-zoom-wrap {
+  width: 100%;
+  max-height: 72vh;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: none;
+  background: rgba(255,255,255,.04);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  margin-bottom: 12px;
+  position: relative;
+}
+.exp-zoom-content {
+  transform-origin: 0 0;
+  width: max-content;
+  min-width: 100%;
+  line-height: 0;
+}
+.exp-zoom-content .explanation-image {
+  width: min(640px, 100%);
+  max-width: none;
+  margin: 0;
+  border: 0;
+  border-radius: 12px;
+  display: block;
+}
+.exp-zoom-hint {
+  color: var(--muted);
+  font-size: .72rem;
+  padding: 6px 2px 0;
+}

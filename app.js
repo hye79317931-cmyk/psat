@@ -3156,3 +3156,181 @@ init().catch((err) => {
   console.error(err);
   showToast('앱 초기화 중 오류가 났어');
 });
+
+
+/* === v26 해설보기 손가락 핀치 줌 === */
+function setupExplanationPinchZoomV26(wrap, content, img, label) {
+  if (!wrap || !content || !img) return;
+
+  const zoomState = {
+    scale: 1,
+    min: 1,
+    max: 4,
+    startScale: 1,
+    startDist: 0,
+    startMid: null,
+    startScrollLeft: 0,
+    startScrollTop: 0,
+    pan: null
+  };
+
+  function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
+  }
+  function dist(t1, t2) {
+    return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+  }
+  function mid(t1, t2) {
+    return {
+      x: (t1.clientX + t2.clientX) / 2,
+      y: (t1.clientY + t2.clientY) / 2
+    };
+  }
+  function applyScale(nextScale, anchorClientX, anchorClientY) {
+    nextScale = clamp(nextScale, zoomState.min, zoomState.max);
+    const oldScale = zoomState.scale;
+    const rect = wrap.getBoundingClientRect();
+
+    const anchorX = (anchorClientX ?? (rect.left + rect.width / 2)) - rect.left + wrap.scrollLeft;
+    const anchorY = (anchorClientY ?? (rect.top + rect.height / 2)) - rect.top + wrap.scrollTop;
+
+    const contentX = anchorX / oldScale;
+    const contentY = anchorY / oldScale;
+
+    zoomState.scale = nextScale;
+    content.style.transform = `scale(${zoomState.scale})`;
+    content.style.width = `${img.offsetWidth * zoomState.scale}px`;
+    content.style.height = `${img.offsetHeight * zoomState.scale}px`;
+
+    wrap.scrollLeft = contentX * zoomState.scale - ((anchorClientX ?? (rect.left + rect.width / 2)) - rect.left);
+    wrap.scrollTop = contentY * zoomState.scale - ((anchorClientY ?? (rect.top + rect.height / 2)) - rect.top);
+
+    if (label) label.textContent = `${Math.round(zoomState.scale * 100)}%`;
+  }
+  function resetZoom() {
+    zoomState.scale = 1;
+    content.style.transform = "scale(1)";
+    content.style.width = "";
+    content.style.height = "";
+    wrap.scrollLeft = 0;
+    wrap.scrollTop = 0;
+    if (label) label.textContent = "100%";
+  }
+
+  wrap._expZoomIn = () => applyScale(zoomState.scale + 0.25);
+  wrap._expZoomOut = () => applyScale(zoomState.scale - 0.25);
+  wrap._expZoomReset = resetZoom;
+
+  // 핀치 줌: 두 손가락
+  wrap.addEventListener("touchstart", (event) => {
+    if (event.touches.length === 2) {
+      event.preventDefault();
+      zoomState.startDist = dist(event.touches[0], event.touches[1]);
+      zoomState.startScale = zoomState.scale;
+      zoomState.startMid = mid(event.touches[0], event.touches[1]);
+      zoomState.startScrollLeft = wrap.scrollLeft;
+      zoomState.startScrollTop = wrap.scrollTop;
+      zoomState.pan = null;
+    } else if (event.touches.length === 1) {
+      zoomState.pan = {
+        x: event.touches[0].clientX,
+        y: event.touches[0].clientY,
+        left: wrap.scrollLeft,
+        top: wrap.scrollTop
+      };
+    }
+  }, { passive: false });
+
+  wrap.addEventListener("touchmove", (event) => {
+    if (event.touches.length === 2 && zoomState.startDist) {
+      event.preventDefault();
+      const d = dist(event.touches[0], event.touches[1]);
+      const m = mid(event.touches[0], event.touches[1]);
+      const next = zoomState.startScale * (d / zoomState.startDist);
+      applyScale(next, m.x, m.y);
+      return;
+    }
+
+    // 확대 상태에서 한 손가락 이동
+    if (event.touches.length === 1 && zoomState.pan && zoomState.scale > 1.01) {
+      event.preventDefault();
+      wrap.scrollLeft = zoomState.pan.left - (event.touches[0].clientX - zoomState.pan.x);
+      wrap.scrollTop = zoomState.pan.top - (event.touches[0].clientY - zoomState.pan.y);
+    }
+  }, { passive: false });
+
+  wrap.addEventListener("touchend", () => {
+    if (event?.touches?.length < 2) zoomState.startDist = 0;
+    if (!event?.touches?.length) zoomState.pan = null;
+  }, { passive: false });
+
+  // 마우스/트랙패드 테스트용 휠 줌
+  wrap.addEventListener("wheel", (event) => {
+    if (!event.ctrlKey) return;
+    event.preventDefault();
+    applyScale(zoomState.scale + (event.deltaY < 0 ? 0.15 : -0.15), event.clientX, event.clientY);
+  }, { passive: false });
+
+  img.addEventListener("load", resetZoom, { once: true });
+  setTimeout(resetZoom, 50);
+}
+
+/* 기존 showExplanation 덮어쓰기: 해설 이미지에 핀치 줌 컨테이너 추가 */
+function showExplanation() {
+  if (!state.current) return;
+  const hasText = state.current.explanation && state.current.explanation.trim();
+  const hasImage = state.current.explanationImageData;
+  els.explanationBox.innerHTML = '';
+
+  if (!hasText && !hasImage) {
+    els.explanationBox.textContent = '등록된 해설이 없습니다.';
+  } else {
+    if (hasImage) {
+      const toolbar = document.createElement('div');
+      toolbar.className = 'exp-zoom-toolbar';
+      toolbar.innerHTML = `
+        <button class="exp-zoom-btn" type="button" data-exp-zoom="out">축소</button>
+        <button class="exp-zoom-btn" type="button" data-exp-zoom="reset">맞춤</button>
+        <button class="exp-zoom-btn" type="button" data-exp-zoom="in">확대</button>
+        <span class="exp-zoom-label">100%</span>
+      `;
+
+      const wrap = document.createElement('div');
+      wrap.className = 'exp-zoom-wrap';
+
+      const content = document.createElement('div');
+      content.className = 'exp-zoom-content';
+
+      const img = document.createElement('img');
+      img.src = state.current.explanationImageData;
+      img.alt = '해설 이미지';
+      img.className = 'explanation-image';
+
+      content.appendChild(img);
+      wrap.appendChild(content);
+      els.explanationBox.appendChild(toolbar);
+      els.explanationBox.appendChild(wrap);
+
+      const label = toolbar.querySelector('.exp-zoom-label');
+      setupExplanationPinchZoomV26(wrap, content, img, label);
+
+      toolbar.querySelector('[data-exp-zoom="in"]').addEventListener('click', () => wrap._expZoomIn?.());
+      toolbar.querySelector('[data-exp-zoom="out"]').addEventListener('click', () => wrap._expZoomOut?.());
+      toolbar.querySelector('[data-exp-zoom="reset"]').addEventListener('click', () => wrap._expZoomReset?.());
+
+      const hint = document.createElement('div');
+      hint.className = 'exp-zoom-hint';
+      hint.textContent = '해설 이미지는 두 손가락으로 확대/축소, 확대 후 한 손가락으로 이동';
+      els.explanationBox.appendChild(hint);
+    }
+
+    if (hasText) {
+      const text = document.createElement('div');
+      text.className = 'explanation-text';
+      text.textContent = state.current.explanation.trim();
+      els.explanationBox.appendChild(text);
+    }
+  }
+
+  els.explanationBox.classList.remove('hidden');
+}
