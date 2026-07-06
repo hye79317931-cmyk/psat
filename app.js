@@ -3648,3 +3648,140 @@ function bindMidCategoryKeepV29() {
   input.addEventListener("change", () => setCategoryPreferenceV29(input.value));
 }
 setTimeout(bindMidCategoryKeepV29, 700);
+
+
+/* === v30: 중간분류 이전 입력값 확실히 유지 === */
+function categoryValueV30(value) {
+  return String(value || "").trim();
+}
+function readPrefsV30() {
+  try { return JSON.parse(localStorage.getItem(FORM_PREF_KEY) || "{}") || {}; }
+  catch { return {}; }
+}
+function writePrefsV30(prefs) {
+  localStorage.setItem(FORM_PREF_KEY, JSON.stringify(prefs || {}));
+}
+function categoryInputV30() {
+  return $("categoryInput");
+}
+function currentCategoryV30() {
+  return categoryValueV30(categoryInputV30()?.value || "");
+}
+function lastCategoryV30() {
+  return categoryValueV30(readPrefsV30().category || localStorage.getItem("psatLastMidCategoryV30") || "");
+}
+function setLastCategoryV30(value) {
+  const category = categoryValueV30(value);
+  const prefs = readPrefsV30();
+  prefs.category = category;
+  prefs.subject = els.subjectInput?.value || prefs.subject || "언어";
+  prefs.year = normalizedYear(els.yearInput?.value ?? prefs.year ?? "");
+  prefs.imageQuality = els.imageQualityInput?.value || prefs.imageQuality || "sharp";
+  writePrefsV30(prefs);
+  localStorage.setItem("psatLastMidCategoryV30", category);
+}
+function saveFormPreferences() {
+  const typedCategory = currentCategoryV30();
+  const prefs = {
+    subject: els.subjectInput?.value || "언어",
+    year: normalizedYear(els.yearInput?.value),
+    imageQuality: els.imageQualityInput?.value || "sharp",
+    // resetForm 내부에서 categoryInput이 잠깐 비어도 직전 중간분류를 날리지 않음
+    category: typedCategory || lastCategoryV30()
+  };
+  writePrefsV30(prefs);
+  localStorage.setItem("psatLastMidCategoryV30", prefs.category || "");
+}
+function applyFormPreferences() {
+  const prefs = readPrefsV30();
+  if (els.subjectInput) {
+    const subject = SUBJECT_GROUPS.includes(canonicalSubject(prefs.subject)) ? canonicalSubject(prefs.subject) : "언어";
+    els.subjectInput.value = subject;
+  }
+  if (els.yearInput) els.yearInput.value = normalizedYear(prefs.year);
+  if (els.imageQualityInput) {
+    const quality = ["sharp", "bulk", "original"].includes(prefs.imageQuality) ? prefs.imageQuality : "sharp";
+    els.imageQualityInput.value = quality;
+  }
+  if (categoryInputV30()) categoryInputV30().value = categoryValueV30(prefs.category || "");
+}
+const resetFormV30Original = resetForm;
+resetForm = function() {
+  const keepCategory = currentCategoryV30() || lastCategoryV30();
+  resetFormV30Original();
+  if (categoryInputV30()) categoryInputV30().value = keepCategory;
+  setLastCategoryV30(keepCategory);
+};
+const editProblemV30Original = editProblem;
+editProblem = function(problem, options = {}) {
+  editProblemV30Original(problem, options);
+  const category = categoryValueV30(problem?.category || "");
+  if (categoryInputV30()) categoryInputV30().value = category;
+  setLastCategoryV30(category);
+  populateCategoryDatalistV30();
+};
+function populateCategoryDatalistV30() {
+  const input = categoryInputV30();
+  if (!input) return;
+  input.setAttribute("list", "categoryDatalistV30");
+  let list = $("categoryDatalistV30");
+  if (!list) {
+    list = document.createElement("datalist");
+    list.id = "categoryDatalistV30";
+    input.insertAdjacentElement("afterend", list);
+  }
+  const values = [...new Set([
+    lastCategoryV30(),
+    ...(state.problems || []).map(p => categoryValueV30(p.category || ""))
+  ].filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko", { numeric: true, sensitivity: "base" }));
+  list.innerHTML = "";
+  for (const value of values) {
+    const option = document.createElement("option");
+    option.value = value;
+    list.appendChild(option);
+  }
+}
+function bindCategoryKeepV30() {
+  const input = categoryInputV30();
+  if (input && !input.dataset.v30KeepReady) {
+    input.dataset.v30KeepReady = "1";
+    input.addEventListener("input", () => {
+      setLastCategoryV30(input.value);
+      try { populateCategoryFiltersV28?.(); } catch {}
+      populateCategoryDatalistV30();
+    });
+    input.addEventListener("change", () => {
+      setLastCategoryV30(input.value);
+      try { populateCategoryFiltersV28?.(); } catch {}
+      populateCategoryDatalistV30();
+    });
+  }
+  populateCategoryDatalistV30();
+}
+const saveProblemFromFormV30Original = saveProblemFromForm;
+saveProblemFromForm = async function(event) {
+  const beforeCategory = currentCategoryV30() || lastCategoryV30();
+  if (categoryInputV30() && !currentCategoryV30()) {
+    categoryInputV30().value = beforeCategory;
+  }
+  setLastCategoryV30(categoryInputV30()?.value || beforeCategory);
+  await saveProblemFromFormV30Original(event);
+  // 새 문제 저장 뒤 원래 resetForm이 돌면서 비우는 문제를 다시 복구
+  const keep = beforeCategory || lastCategoryV30();
+  setTimeout(() => {
+    if (!els.editingId?.value && categoryInputV30()) {
+      categoryInputV30().value = keep;
+      setLastCategoryV30(keep);
+    }
+    bindCategoryKeepV30();
+  }, 80);
+};
+const refreshV30Original = refresh;
+refresh = async function() {
+  await refreshV30Original();
+  bindCategoryKeepV30();
+};
+setTimeout(() => {
+  bindCategoryKeepV30();
+  applyFormPreferences();
+}, 600);
