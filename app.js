@@ -3157,31 +3157,235 @@ init().catch((err) => {
   showToast('앱 초기화 중 오류가 났어');
 });
 
-/* === v28: 커스텀 줌 제거, 브라우저 기본 원본보기 === */
-function dataUrlToBlobV28(dataUrl){
-  const parts=dataUrl.split(",");
-  const mime=(parts[0].match(/:(.*?);/)||[])[1]||"image/png";
-  const bin=atob(parts[1]||"");
-  const bytes=new Uint8Array(bin.length);
-  for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
-  return new Blob([bytes],{type:mime});
-}
-function openExplanationOriginalV28(dataUrl){
-  try{
-    const blob=dataUrlToBlobV28(dataUrl);
-    const url=URL.createObjectURL(blob);
-    const win=window.open(url,"_blank","noopener,noreferrer");
-    if(!win){
-      const a=document.createElement("a");
-      a.href=url;a.target="_blank";a.rel="noopener noreferrer";a.download="psat_explanation.png";
-      document.body.appendChild(a);a.click();a.remove();
-    }
-    setTimeout(()=>URL.revokeObjectURL(url),60000);
-  }catch(err){
-    console.warn(err);
-    const win=window.open(dataUrl,"_blank","noopener,noreferrer");
-    if(!win)showToast("새 창 열기가 막혔어. 해설 이미지를 길게 눌러 열어줘.");
+
+/* === v26 해설보기 손가락 핀치 줌 === */
+function setupExplanationPinchZoomV26(wrap, content, img, label) {
+  if (!wrap || !content || !img) return;
+
+  const zoomState = {
+    scale: 1,
+    min: 1,
+    max: 4,
+    startScale: 1,
+    startDist: 0,
+    startMid: null,
+    startScrollLeft: 0,
+    startScrollTop: 0,
+    pan: null
+  };
+
+  function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
   }
+  function dist(t1, t2) {
+    return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+  }
+  function mid(t1, t2) {
+    return {
+      x: (t1.clientX + t2.clientX) / 2,
+      y: (t1.clientY + t2.clientY) / 2
+    };
+  }
+  function applyScale(nextScale, anchorClientX, anchorClientY) {
+    nextScale = clamp(nextScale, zoomState.min, zoomState.max);
+    const oldScale = zoomState.scale;
+    const rect = wrap.getBoundingClientRect();
+
+    const anchorX = (anchorClientX ?? (rect.left + rect.width / 2)) - rect.left + wrap.scrollLeft;
+    const anchorY = (anchorClientY ?? (rect.top + rect.height / 2)) - rect.top + wrap.scrollTop;
+
+    const contentX = anchorX / oldScale;
+    const contentY = anchorY / oldScale;
+
+    zoomState.scale = nextScale;
+    content.style.transform = `scale(${zoomState.scale})`;
+    content.style.width = `${img.offsetWidth * zoomState.scale}px`;
+    content.style.height = `${img.offsetHeight * zoomState.scale}px`;
+
+    wrap.scrollLeft = contentX * zoomState.scale - ((anchorClientX ?? (rect.left + rect.width / 2)) - rect.left);
+    wrap.scrollTop = contentY * zoomState.scale - ((anchorClientY ?? (rect.top + rect.height / 2)) - rect.top);
+
+    if (label) label.textContent = `${Math.round(zoomState.scale * 100)}%`;
+  }
+  function resetZoom() {
+    zoomState.scale = 1;
+    content.style.transform = "scale(1)";
+    content.style.width = "";
+    content.style.height = "";
+    wrap.scrollLeft = 0;
+    wrap.scrollTop = 0;
+    if (label) label.textContent = "100%";
+  }
+
+  wrap._expZoomIn = () => applyScale(zoomState.scale + 0.25);
+  wrap._expZoomOut = () => applyScale(zoomState.scale - 0.25);
+  wrap._expZoomReset = resetZoom;
+
+  // 핀치 줌: 두 손가락
+  wrap.addEventListener("touchstart", (event) => {
+    if (event.touches.length === 2) {
+      event.preventDefault();
+      zoomState.startDist = dist(event.touches[0], event.touches[1]);
+      zoomState.startScale = zoomState.scale;
+      zoomState.startMid = mid(event.touches[0], event.touches[1]);
+      zoomState.startScrollLeft = wrap.scrollLeft;
+      zoomState.startScrollTop = wrap.scrollTop;
+      zoomState.pan = null;
+    } else if (event.touches.length === 1) {
+      zoomState.pan = {
+        x: event.touches[0].clientX,
+        y: event.touches[0].clientY,
+        left: wrap.scrollLeft,
+        top: wrap.scrollTop
+      };
+    }
+  }, { passive: false });
+
+  wrap.addEventListener("touchmove", (event) => {
+    if (event.touches.length === 2 && zoomState.startDist) {
+      event.preventDefault();
+      const d = dist(event.touches[0], event.touches[1]);
+      const m = mid(event.touches[0], event.touches[1]);
+      const next = zoomState.startScale * (d / zoomState.startDist);
+      applyScale(next, m.x, m.y);
+      return;
+    }
+
+    // 확대 상태에서 한 손가락 이동
+    if (event.touches.length === 1 && zoomState.pan && zoomState.scale > 1.01) {
+      event.preventDefault();
+      wrap.scrollLeft = zoomState.pan.left - (event.touches[0].clientX - zoomState.pan.x);
+      wrap.scrollTop = zoomState.pan.top - (event.touches[0].clientY - zoomState.pan.y);
+    }
+  }, { passive: false });
+
+  wrap.addEventListener("touchend", () => {
+    if (event?.touches?.length < 2) zoomState.startDist = 0;
+    if (!event?.touches?.length) zoomState.pan = null;
+  }, { passive: false });
+
+  // 마우스/트랙패드 테스트용 휠 줌
+  wrap.addEventListener("wheel", (event) => {
+    if (!event.ctrlKey) return;
+    event.preventDefault();
+    applyScale(zoomState.scale + (event.deltaY < 0 ? 0.15 : -0.15), event.clientX, event.clientY);
+  }, { passive: false });
+
+  img.addEventListener("load", resetZoom, { once: true });
+  setTimeout(resetZoom, 50);
+}
+
+/* 기존 showExplanation 덮어쓰기: 해설 이미지에 핀치 줌 컨테이너 추가 */
+function showExplanation() {
+  if (!state.current) return;
+  const hasText = state.current.explanation && state.current.explanation.trim();
+  const hasImage = state.current.explanationImageData;
+  els.explanationBox.innerHTML = '';
+
+  if (!hasText && !hasImage) {
+    els.explanationBox.textContent = '등록된 해설이 없습니다.';
+  } else {
+    if (hasImage) {
+      const toolbar = document.createElement('div');
+      toolbar.className = 'exp-zoom-toolbar';
+      toolbar.innerHTML = `
+        <button class="exp-zoom-btn" type="button" data-exp-zoom="out">축소</button>
+        <button class="exp-zoom-btn" type="button" data-exp-zoom="reset">맞춤</button>
+        <button class="exp-zoom-btn" type="button" data-exp-zoom="in">확대</button>
+        <span class="exp-zoom-label">100%</span>
+      `;
+
+      const wrap = document.createElement('div');
+      wrap.className = 'exp-zoom-wrap';
+
+      const content = document.createElement('div');
+      content.className = 'exp-zoom-content';
+
+      const img = document.createElement('img');
+      img.src = state.current.explanationImageData;
+      img.alt = '해설 이미지';
+      img.className = 'explanation-image';
+
+      content.appendChild(img);
+      wrap.appendChild(content);
+      els.explanationBox.appendChild(toolbar);
+      els.explanationBox.appendChild(wrap);
+
+      const label = toolbar.querySelector('.exp-zoom-label');
+      setupExplanationPinchZoomV26(wrap, content, img, label);
+
+      toolbar.querySelector('[data-exp-zoom="in"]').addEventListener('click', () => wrap._expZoomIn?.());
+      toolbar.querySelector('[data-exp-zoom="out"]').addEventListener('click', () => wrap._expZoomOut?.());
+      toolbar.querySelector('[data-exp-zoom="reset"]').addEventListener('click', () => wrap._expZoomReset?.());
+
+      const hint = document.createElement('div');
+      hint.className = 'exp-zoom-hint';
+      hint.textContent = '해설 이미지는 두 손가락으로 확대/축소, 확대 후 한 손가락으로 이동';
+      els.explanationBox.appendChild(hint);
+    }
+
+    if (hasText) {
+      const text = document.createElement('div');
+      text.className = 'explanation-text';
+      text.textContent = state.current.explanation.trim();
+      els.explanationBox.appendChild(text);
+    }
+  }
+
+  els.explanationBox.classList.remove('hidden');
+}
+
+/* === v27 해설보기 줌/이동 확정 수정 === */
+function setupExplanationZoomV27(wrap,stage,img,label){
+  if(!wrap||!stage||!img)return;
+  const z={scale:1,min:1,max:5,x:0,y:0,baseW:1,baseH:1,pointers:new Map(),pinchStartDist:0,pinchStartScale:1,pinchStartX:0,pinchStartY:0,pinchCenter:{x:0,y:0},panStart:null};
+  const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+  function measure(){
+    const rect=wrap.getBoundingClientRect(); const nw=img.naturalWidth||img.width||1, nh=img.naturalHeight||img.height||1;
+    const fit=Math.min(rect.width/nw,1); z.baseW=Math.max(1,Math.round(nw*fit)); z.baseH=Math.max(1,Math.round(nh*fit));
+    img.style.width=z.baseW+"px"; img.style.height=z.baseH+"px"; stage.style.width=z.baseW+"px"; stage.style.height=z.baseH+"px";
+    z.scale=1; z.x=0; z.y=0; apply();
+  }
+  function apply(){
+    const rect=wrap.getBoundingClientRect(); const sw=z.baseW*z.scale, sh=z.baseH*z.scale;
+    z.x=sw<=rect.width?0:clamp(z.x,rect.width-sw,0);
+    z.y=sh<=rect.height?0:clamp(z.y,rect.height-sh,0);
+    stage.style.transform=`translate3d(${z.x}px,${z.y}px,0) scale(${z.scale})`;
+    if(label)label.textContent=Math.round(z.scale*100)+"%";
+  }
+  function zoomAt(next,cx,cy){
+    const rect=wrap.getBoundingClientRect(); const old=z.scale; next=clamp(next,z.min,z.max);
+    const px=(cx??(rect.left+rect.width/2))-rect.left, py=(cy??(rect.top+rect.height/2))-rect.top;
+    const contentX=(px-z.x)/old, contentY=(py-z.y)/old;
+    z.scale=next; z.x=px-contentX*z.scale; z.y=py-contentY*z.scale; apply();
+  }
+  const distance=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+  const center=(a,b)=>({x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2});
+  const two=()=>Array.from(z.pointers.values()).slice(0,2);
+  wrap._expZoomIn=()=>zoomAt(z.scale*1.25);
+  wrap._expZoomOut=()=>zoomAt(z.scale/1.25);
+  wrap._expZoomReset=()=>measure();
+  wrap.addEventListener("pointerdown",e=>{
+    e.preventDefault(); try{wrap.setPointerCapture(e.pointerId)}catch{}
+    z.pointers.set(e.pointerId,{clientX:e.clientX,clientY:e.clientY});
+    if(z.pointers.size===1) z.panStart={clientX:e.clientX,clientY:e.clientY,x:z.x,y:z.y};
+    if(z.pointers.size>=2){const [a,b]=two(); z.pinchStartDist=distance(a,b); z.pinchStartScale=z.scale; z.pinchStartX=z.x; z.pinchStartY=z.y; z.pinchCenter=center(a,b); z.panStart=null;}
+  },{passive:false});
+  wrap.addEventListener("pointermove",e=>{
+    if(!z.pointers.has(e.pointerId))return; e.preventDefault();
+    z.pointers.set(e.pointerId,{clientX:e.clientX,clientY:e.clientY});
+    if(z.pointers.size>=2){
+      const [a,b]=two(); const d=distance(a,b); if(!z.pinchStartDist)return; const c=center(a,b);
+      z.scale=clamp(z.pinchStartScale*(d/z.pinchStartDist),z.min,z.max);
+      const rect=wrap.getBoundingClientRect(); const px=z.pinchCenter.x-rect.left, py=z.pinchCenter.y-rect.top;
+      const ox=(px-z.pinchStartX)/z.pinchStartScale, oy=(py-z.pinchStartY)/z.pinchStartScale;
+      z.x=px-ox*z.scale+(c.x-z.pinchCenter.x); z.y=py-oy*z.scale+(c.y-z.pinchCenter.y); apply(); return;
+    }
+    if(z.panStart){z.x=z.panStart.x+(e.clientX-z.panStart.clientX); z.y=z.panStart.y+(e.clientY-z.panStart.clientY); apply();}
+  },{passive:false});
+  function endPointer(e){z.pointers.delete(e.pointerId); if(z.pointers.size===1){const p=Array.from(z.pointers.values())[0]; z.panStart={clientX:p.clientX,clientY:p.clientY,x:z.x,y:z.y};}else{z.panStart=null;z.pinchStartDist=0;}}
+  wrap.addEventListener("pointerup",endPointer,{passive:false}); wrap.addEventListener("pointercancel",endPointer,{passive:false}); wrap.addEventListener("lostpointercapture",endPointer,{passive:false});
+  img.addEventListener("load",measure,{once:true}); setTimeout(measure,80); window.addEventListener("resize",()=>setTimeout(measure,120));
 }
 function showExplanation(){
   if(!state.current)return;
@@ -3191,21 +3395,193 @@ function showExplanation(){
   if(!hasText&&!hasImage){els.explanationBox.textContent="등록된 해설이 없습니다.";}
   else{
     if(hasImage){
-      const toolbar=document.createElement("div");toolbar.className="explanation-native-toolbar";
-      const openBtn=document.createElement("button");openBtn.type="button";openBtn.className="primary-native";openBtn.textContent="원본보기";
-      openBtn.onclick=()=>openExplanationOriginalV28(state.current.explanationImageData);
-      const helpBtn=document.createElement("button");helpBtn.type="button";helpBtn.textContent="사용법";
-      helpBtn.onclick=()=>showToast("원본보기로 연 뒤 핸드폰 기본 사진처럼 두 손가락 확대/축소해.");
-      toolbar.append(openBtn,helpBtn);els.explanationBox.appendChild(toolbar);
-      const img=document.createElement("img");img.src=state.current.explanationImageData;img.alt="해설 이미지";img.className="explanation-image-native";
-      img.onclick=()=>openExplanationOriginalV28(state.current.explanationImageData);
-      els.explanationBox.appendChild(img);
-      const hint=document.createElement("p");hint.className="explanation-native-hint";hint.textContent="이미지나 원본보기를 누르면 브라우저 기본 이미지 화면에서 확대/축소합니다.";
-      els.explanationBox.appendChild(hint);
+      const toolbar=document.createElement("div"); toolbar.className="exp-zoom-toolbar v27";
+      toolbar.innerHTML=`<button class="exp-zoom-btn" type="button" data-exp-zoom="out">축소</button><button class="exp-zoom-btn" type="button" data-exp-zoom="reset">맞춤</button><button class="exp-zoom-btn" type="button" data-exp-zoom="in">확대</button><span class="exp-zoom-label">100%</span>`;
+      const wrap=document.createElement("div"); wrap.className="exp-zoom-wrap v27";
+      const stage=document.createElement("div"); stage.className="exp-zoom-stage v27";
+      const img=document.createElement("img"); img.src=state.current.explanationImageData; img.alt="해설 이미지"; img.className="explanation-image";
+      stage.appendChild(img); wrap.appendChild(stage); els.explanationBox.appendChild(toolbar); els.explanationBox.appendChild(wrap);
+      const label=toolbar.querySelector(".exp-zoom-label"); setupExplanationZoomV27(wrap,stage,img,label);
+      toolbar.querySelector('[data-exp-zoom="in"]').onclick=()=>wrap._expZoomIn?.();
+      toolbar.querySelector('[data-exp-zoom="out"]').onclick=()=>wrap._expZoomOut?.();
+      toolbar.querySelector('[data-exp-zoom="reset"]').onclick=()=>wrap._expZoomReset?.();
+      const hint=document.createElement("div"); hint.className="exp-zoom-hint v27"; hint.textContent="해설 이미지는 두 손가락으로 확대/축소, 확대 후 한 손가락으로 이동"; els.explanationBox.appendChild(hint);
     }
-    if(hasText){
-      const text=document.createElement("div");text.className="explanation-text";text.textContent=state.current.explanation.trim();els.explanationBox.appendChild(text);
-    }
+    if(hasText){const text=document.createElement("div"); text.className="explanation-text"; text.textContent=state.current.explanation.trim(); els.explanationBox.appendChild(text);}
   }
   els.explanationBox.classList.remove("hidden");
 }
+
+
+/* === v28: 중간분류 항목 추가 === */
+function categoryValueV28(value) {
+  return String(value || "").trim();
+}
+function problemCategoryV28(problem) {
+  return categoryValueV28(problem?.category || "");
+}
+function categoryMatchesV28(problem, filter) {
+  const f = categoryValueV28(filter);
+  if (!f) return true;
+  return problemCategoryV28(problem) === f;
+}
+function getCategorySetV28() {
+  return [...new Set(state.problems.map(problemCategoryV28).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "ko", { numeric: true, sensitivity: "base" }));
+}
+function fillCategorySelectV28(select, keepValue = true) {
+  if (!select) return;
+  const current = keepValue ? select.value : "";
+  select.innerHTML = '<option value="">전체</option>';
+  for (const category of getCategorySetV28()) {
+    const opt = document.createElement("option");
+    opt.value = category;
+    opt.textContent = category;
+    select.appendChild(opt);
+  }
+  if (current && [...select.options].some((option) => option.value === current)) {
+    select.value = current;
+  }
+}
+function populateCategoryFiltersV28() {
+  fillCategorySelectV28($("categoryFilter"));
+  fillCategorySelectV28($("listCategoryFilter"));
+  fillCategorySelectV28($("reviewCategoryFilter"));
+}
+function readFormPreferencesV28() {
+  try { return JSON.parse(localStorage.getItem(FORM_PREF_KEY) || "{}") || {}; }
+  catch { return {}; }
+}
+function saveFormPreferences() {
+  const prefs = {
+    subject: els.subjectInput?.value || "언어",
+    year: normalizedYear(els.yearInput?.value),
+    imageQuality: els.imageQualityInput?.value || "sharp",
+    category: categoryValueV28($("categoryInput")?.value || "")
+  };
+  localStorage.setItem(FORM_PREF_KEY, JSON.stringify(prefs));
+}
+function applyFormPreferences() {
+  const prefs = readFormPreferencesV28();
+  if (els.subjectInput) {
+    const subject = SUBJECT_GROUPS.includes(canonicalSubject(prefs.subject)) ? canonicalSubject(prefs.subject) : "언어";
+    els.subjectInput.value = subject;
+  }
+  if (els.yearInput) els.yearInput.value = normalizedYear(prefs.year);
+  if (els.imageQualityInput) {
+    const quality = ["sharp", "bulk", "original"].includes(prefs.imageQuality) ? prefs.imageQuality : "sharp";
+    els.imageQualityInput.value = quality;
+  }
+  if ($("categoryInput")) $("categoryInput").value = categoryValueV28(prefs.category || "");
+}
+const resetFormV28Original = resetForm;
+resetForm = function() {
+  resetFormV28Original();
+  const prefs = readFormPreferencesV28();
+  if ($("categoryInput")) $("categoryInput").value = categoryValueV28(prefs.category || "");
+};
+const editProblemV28Original = editProblem;
+editProblem = function(problem, options = {}) {
+  editProblemV28Original(problem, options);
+  if ($("categoryInput")) $("categoryInput").value = problemCategoryV28(problem);
+};
+
+function filterProblems(mode, subject, year = "") {
+  const targetYear = normalizedYear(year);
+  const category = $("categoryFilter")?.value || "";
+  return state.problems.filter((p) => {
+    if (subject && !subjectMatches(p, subject)) return false;
+    if (!categoryMatchesV28(p, category)) return false;
+    if (targetYear && normalizedYear(p.year) !== targetYear) return false;
+    if (mode === "wrong") return !!p.wrongActive;
+    if (mode === "slow") return averageTime(p) >= SLOW_MS || (p.lastTimeMs || 0) >= SLOW_MS;
+    if (mode === "unseen") return !p.attempts;
+    if (mode === "flagged") return !!p.flagged;
+    return true;
+  });
+}
+function getVisibleProblemList() {
+  const query = els.searchInput.value.trim().toLowerCase();
+  const subject = els.listSubjectFilter.value;
+  const category = $("listCategoryFilter")?.value || "";
+  const year = els.listYearFilter?.value || "";
+  const yearText = els.listYearTextFilter?.value?.trim().toLowerCase() || "";
+  return state.problems.filter((p) => {
+    const problemYear = normalizedYear(p.year);
+    if (subject && !subjectMatches(p, subject)) return false;
+    if (!categoryMatchesV28(p, category)) return false;
+    if (year && problemYear !== year) return false;
+    if (yearText && !problemYear.toLowerCase().includes(yearText)) return false;
+    if (!query) return true;
+    const imageKeyword = p.explanationImageData ? "해설이미지 스크린샷" : "";
+    const hay = [canonicalSubject(p.subject), p.subject, problemCategoryV28(p), p.year, p.explanation, imageKeyword].join(" ").toLowerCase();
+    return hay.includes(query);
+  });
+}
+function reviewListForMode(mode) {
+  const subject = els.reviewSubjectFilter?.value || "";
+  const category = $("reviewCategoryFilter")?.value || "";
+  const year = els.reviewYearFilter?.value || "";
+  const yearText = (els.reviewYearTextFilter?.value || "").trim().toLowerCase();
+  const applyReviewFilters = (list) => list.filter((p) => {
+    const problemYear = normalizedYear(p.year);
+    if (subject && !subjectMatches(p, subject)) return false;
+    if (!categoryMatchesV28(p, category)) return false;
+    if (year && problemYear !== year) return false;
+    if (yearText && !problemYear.toLowerCase().includes(yearText)) return false;
+    return true;
+  });
+  if (mode === "correct") {
+    return applyReviewFilters(state.problems)
+      .filter((p) => (p.correct || 0) > 0 && !p.wrongActive)
+      .sort((a, b) => (b.lastAnsweredAt || 0) - (a.lastAnsweredAt || 0));
+  }
+  return applyReviewFilters(state.problems)
+    .filter((p) => p.wrongActive)
+    .sort((a, b) => (b.lastAnsweredAt || 0) - (a.lastAnsweredAt || 0));
+}
+const problemItemV28Original = problemItem;
+problemItem = function(p, wrongOnly, displayNumber = "", reviewMode = "") {
+  const div = problemItemV28Original(p, wrongOnly, displayNumber, reviewMode);
+  const category = problemCategoryV28(p);
+  if (category) {
+    const title = div.querySelector("h3");
+    if (title && !title.querySelector(".category-pill")) {
+      title.insertAdjacentHTML("beforeend", ` <span class="category-pill">${escapeHtml(category)}</span>`);
+    }
+  }
+  return div;
+};
+function renderWrongList() {
+  const mode = state.reviewMode || "wrong";
+  const list = reviewListForMode(mode);
+  els.wrongList.innerHTML = "";
+  if (els.reviewListTitle) {
+    const subject = els.reviewSubjectFilter?.value || "전체";
+    const category = $("reviewCategoryFilter")?.value || "전체";
+    const year = els.reviewYearFilter?.value || els.reviewYearTextFilter?.value || "전체";
+    els.reviewListTitle.textContent = `${mode === "correct" ? "정답복습" : "오답복습"} · 대분류 ${subject} · 중간분류 ${category} · 연도/회차 ${year}`;
+  }
+  if (!list.length) {
+    els.wrongList.innerHTML = mode === "correct"
+      ? '<p class="hint">아직 정답복습할 문제가 없어.</p>'
+      : '<p class="hint">현재 복습할 오답이 없어.</p>';
+    return;
+  }
+  for (const p of list) els.wrongList.appendChild(problemItem(p, true, "", mode));
+}
+const refreshV28Original = refresh;
+refresh = async function() {
+  await refreshV28Original();
+  populateCategoryFiltersV28();
+  renderProblemList();
+  renderWrongList();
+};
+function bindMidCategoryEventsV28() {
+  $("categoryInput")?.addEventListener("input", saveFormPreferences);
+  $("categoryFilter")?.addEventListener("change", () => {});
+  $("listCategoryFilter")?.addEventListener("change", renderProblemList);
+  $("reviewCategoryFilter")?.addEventListener("change", renderWrongList);
+  populateCategoryFiltersV28();
+}
+setTimeout(bindMidCategoryEventsV28, 500);

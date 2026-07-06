@@ -1478,10 +1478,100 @@ body.reorder-active * {
   color: var(--text);
 }
 
-/* === v28 해설 원본보기 === */
-.explanation-native-toolbar{display:flex;flex-wrap:nowrap;gap:6px;align-items:center;margin:0 0 8px;overflow-x:auto;scrollbar-width:none}
-.explanation-native-toolbar::-webkit-scrollbar{display:none}
-.explanation-native-toolbar button{flex:0 0 auto;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.12);color:var(--text);padding:7px 10px;font-weight:900;font-size:.78rem}
-.explanation-native-toolbar .primary-native{background:rgba(56,189,248,.22);border-color:rgba(56,189,248,.45)}
-.explanation-image-native{display:block;width:min(640px,100%);max-width:100%;border-radius:14px;border:1px solid var(--line);background:#fff;margin-bottom:8px}
-.explanation-native-hint{color:var(--muted);font-size:.72rem;margin:0 0 10px}
+
+/* === v26 해설보기 손가락 줌인/줌아웃 === */
+.explanation {
+  overflow: hidden;
+}
+.exp-zoom-toolbar {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  align-items: center;
+  margin: 0 0 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.exp-zoom-toolbar::-webkit-scrollbar {
+  display: none;
+}
+.exp-zoom-toolbar button,
+.exp-zoom-toolbar span {
+  flex: 0 0 auto;
+}
+.exp-zoom-btn {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255,255,255,.10);
+  color: var(--text);
+  padding: 6px 10px;
+  font-weight: 900;
+  font-size: .78rem;
+}
+.exp-zoom-label {
+  color: var(--muted);
+  font-size: .76rem;
+  font-weight: 800;
+}
+.exp-zoom-wrap {
+  width: 100%;
+  max-height: 72vh;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: none;
+  background: rgba(255,255,255,.04);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  margin-bottom: 12px;
+  position: relative;
+}
+.exp-zoom-content {
+  transform-origin: 0 0;
+  width: max-content;
+  min-width: 100%;
+  line-height: 0;
+}
+.exp-zoom-content .explanation-image {
+  width: min(640px, 100%);
+  max-width: none;
+  margin: 0;
+  border: 0;
+  border-radius: 12px;
+  display: block;
+}
+.exp-zoom-hint {
+  color: var(--muted);
+  font-size: .72rem;
+  padding: 6px 2px 0;
+}
+
+/* === v27 해설보기 줌/이동 재수정 === */
+.exp-zoom-toolbar.v27{display:flex!important;flex-wrap:nowrap!important;gap:5px!important;align-items:center!important;margin:0 0 8px!important;overflow-x:auto!important;scrollbar-width:none!important}
+.exp-zoom-toolbar.v27::-webkit-scrollbar{display:none!important}
+.exp-zoom-toolbar.v27 .exp-zoom-btn{flex:0 0 auto!important;padding:7px 10px!important;border-radius:999px!important;border:1px solid var(--line)!important;background:rgba(255,255,255,.12)!important;color:var(--text)!important;font-weight:900!important;font-size:.76rem!important}
+.exp-zoom-toolbar.v27 .exp-zoom-label{flex:0 0 auto!important;color:var(--muted)!important;font-size:.75rem!important;font-weight:900!important}
+.exp-zoom-wrap.v27{position:relative!important;width:100%!important;height:min(70vh,620px)!important;max-height:70vh!important;overflow:hidden!important;border-radius:14px!important;border:1px solid var(--line)!important;background:#050b16!important;margin-bottom:10px!important;touch-action:none!important;overscroll-behavior:contain!important;user-select:none!important;-webkit-user-select:none!important}
+.exp-zoom-stage.v27{position:absolute!important;left:0!important;top:0!important;transform-origin:0 0!important;will-change:transform!important;line-height:0!important}
+.exp-zoom-stage.v27 img{display:block!important;max-width:none!important;width:auto!important;height:auto!important;border:0!important;border-radius:0!important;margin:0!important;background:#fff!important;user-select:none!important;-webkit-user-drag:none!important}
+.exp-zoom-hint.v27{color:var(--muted)!important;font-size:.72rem!important;padding:2px 0 0!important}
+
+/* === v28 중간분류 항목 === */
+.mid-category-row {
+  margin-top: 8px;
+}
+.category-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(14,165,233,.13);
+  color: #075985;
+  font-size: .78rem;
+  font-weight: 900;
+  margin-left: 4px;
+}
+.mid-category-muted {
+  color: var(--muted);
+  font-size: .82rem;
+}
