@@ -3585,3 +3585,66 @@ function bindMidCategoryEventsV28() {
   populateCategoryFiltersV28();
 }
 setTimeout(bindMidCategoryEventsV28, 500);
+
+
+/* === v29: 중간분류도 바로 전 값 유지 === */
+function getCategoryPreferenceV29() {
+  try {
+    const prefs = JSON.parse(localStorage.getItem(FORM_PREF_KEY) || "{}") || {};
+    return categoryValueV28(prefs.category || "");
+  } catch {
+    return "";
+  }
+}
+function setCategoryPreferenceV29(category) {
+  let prefs = {};
+  try { prefs = JSON.parse(localStorage.getItem(FORM_PREF_KEY) || "{}") || {}; } catch { prefs = {}; }
+  prefs.category = categoryValueV28(category);
+  if (els.subjectInput) prefs.subject = els.subjectInput.value || prefs.subject || "언어";
+  if (els.yearInput) prefs.year = normalizedYear(els.yearInput.value || prefs.year || "");
+  if (els.imageQualityInput) prefs.imageQuality = els.imageQualityInput.value || prefs.imageQuality || "sharp";
+  localStorage.setItem(FORM_PREF_KEY, JSON.stringify(prefs));
+}
+
+const saveFormPreferencesV29Base = saveFormPreferences;
+saveFormPreferences = function() {
+  saveFormPreferencesV29Base();
+  setCategoryPreferenceV29($("categoryInput")?.value || getCategoryPreferenceV29());
+};
+
+const resetFormV29Base = resetForm;
+resetForm = function() {
+  const keepCategory = categoryValueV28($("categoryInput")?.value || getCategoryPreferenceV29());
+  resetFormV29Base();
+  if ($("categoryInput")) $("categoryInput").value = keepCategory;
+  setCategoryPreferenceV29(keepCategory);
+};
+
+const editProblemV29Base = editProblem;
+editProblem = function(problem, options = {}) {
+  editProblemV29Base(problem, options);
+  const category = problemCategoryV28(problem) || getCategoryPreferenceV29();
+  if ($("categoryInput")) $("categoryInput").value = category;
+  setCategoryPreferenceV29(category);
+};
+
+const saveProblemFromFormV29Base = saveProblemFromForm;
+saveProblemFromForm = async function(event) {
+  const categoryBeforeSave = categoryValueV28($("categoryInput")?.value || getCategoryPreferenceV29());
+  setCategoryPreferenceV29(categoryBeforeSave);
+  await saveProblemFromFormV29Base(event);
+  // 저장 뒤 새 문제 등록 모드로 넘어가도 중간분류 유지
+  if (!$("editingId")?.value && $("categoryInput")) {
+    $("categoryInput").value = categoryBeforeSave;
+    setCategoryPreferenceV29(categoryBeforeSave);
+  }
+};
+
+function bindMidCategoryKeepV29() {
+  const input = $("categoryInput");
+  if (!input) return;
+  input.value = categoryValueV28(input.value || getCategoryPreferenceV29());
+  input.addEventListener("input", () => setCategoryPreferenceV29(input.value));
+  input.addEventListener("change", () => setCategoryPreferenceV29(input.value));
+}
+setTimeout(bindMidCategoryKeepV29, 700);

@@ -1575,3 +1575,8 @@ body.reorder-active * {
   color: var(--muted);
   font-size: .82rem;
 }
+
+/* === v29 중간분류 최근값 유지 === */
+#categoryInput::placeholder {
+  color: #94a3b8;
+}
