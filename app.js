@@ -3785,3 +3785,174 @@ setTimeout(() => {
   bindCategoryKeepV30();
   applyFormPreferences();
 }, 600);
+
+
+/* === v31: 중간분류 빈칸 복귀 버그 강제 보정 === */
+(function midCategoryKeepV31(){
+  const LAST_KEY = "psatLastMidCategoryV31";
+  const OLD_KEYS = ["psatLastMidCategoryV30", "psatLastMidCategoryV29"];
+
+  function catInput() { return document.getElementById("categoryInput"); }
+  function catValue(v) { return String(v || "").trim(); }
+
+  function readPrefs31() {
+    try { return JSON.parse(localStorage.getItem(FORM_PREF_KEY) || "{}") || {}; }
+    catch { return {}; }
+  }
+  function writePrefs31(prefs) {
+    try { localStorage.setItem(FORM_PREF_KEY, JSON.stringify(prefs || {})); } catch {}
+  }
+  function lastCat31() {
+    const prefs = readPrefs31();
+    const fromPrefs = catValue(prefs.category);
+    const fromNew = catValue(localStorage.getItem(LAST_KEY));
+    const fromOld = OLD_KEYS.map(k => catValue(localStorage.getItem(k))).find(Boolean) || "";
+    return fromPrefs || fromNew || fromOld;
+  }
+  function setLastCat31(value) {
+    const v = catValue(value);
+    if (!v && lastCat31()) return; // 빈값으로 직전값을 지우지 않음
+    const prefs = readPrefs31();
+    prefs.category = v || prefs.category || "";
+    prefs.subject = els.subjectInput?.value || prefs.subject || "언어";
+    prefs.year = normalizedYear(els.yearInput?.value ?? prefs.year ?? "");
+    prefs.imageQuality = els.imageQualityInput?.value || prefs.imageQuality || "sharp";
+    writePrefs31(prefs);
+    try { localStorage.setItem(LAST_KEY, prefs.category || ""); } catch {}
+  }
+  function fillIfBlank31() {
+    const input = catInput();
+    if (!input) return "";
+    const current = catValue(input.value);
+    if (current) {
+      setLastCat31(current);
+      return current;
+    }
+    const keep = lastCat31();
+    if (keep) {
+      input.value = keep;
+      setLastCat31(keep);
+    }
+    return keep;
+  }
+  function updateDatalist31() {
+    const input = catInput();
+    if (!input) return;
+    input.setAttribute("list", "categoryDatalistV31");
+    let list = document.getElementById("categoryDatalistV31");
+    if (!list) {
+      list = document.createElement("datalist");
+      list.id = "categoryDatalistV31";
+      input.insertAdjacentElement("afterend", list);
+    }
+    const values = [...new Set([
+      lastCat31(),
+      ...(state.problems || []).map(p => catValue(p.category))
+    ].filter(Boolean))].sort((a,b) => a.localeCompare(b, "ko", { numeric: true, sensitivity: "base" }));
+    list.innerHTML = "";
+    for (const v of values) {
+      const opt = document.createElement("option");
+      opt.value = v;
+      list.appendChild(opt);
+    }
+  }
+
+  // 기존 저장 preference 함수 자체도 보정
+  if (typeof saveFormPreferences === "function") {
+    const oldSavePrefs31 = saveFormPreferences;
+    saveFormPreferences = function(...args) {
+      const before = fillIfBlank31();
+      const result = oldSavePrefs31.apply(this, args);
+      const input = catInput();
+      const prefs = readPrefs31();
+      prefs.category = catValue(input?.value) || before || prefs.category || "";
+      writePrefs31(prefs);
+      try { localStorage.setItem(LAST_KEY, prefs.category || ""); } catch {}
+      return result;
+    };
+  }
+
+  // 새 문제 초기화 후 빈칸이 되면 즉시 복구
+  if (typeof resetForm === "function") {
+    const oldReset31 = resetForm;
+    resetForm = function(...args) {
+      const keep = fillIfBlank31() || lastCat31();
+      const result = oldReset31.apply(this, args);
+      const input = catInput();
+      if (input && keep) input.value = keep;
+      setLastCat31(keep);
+      updateDatalist31();
+      return result;
+    };
+  }
+
+  // 수정 화면: 해당 문제 중간분류가 있으면 그것, 없으면 직전값
+  if (typeof editProblem === "function") {
+    const oldEdit31 = editProblem;
+    editProblem = function(problem, options = {}) {
+      const result = oldEdit31.call(this, problem, options);
+      const input = catInput();
+      const category = catValue(problem?.category) || lastCat31();
+      if (input && category) input.value = category;
+      setLastCat31(category);
+      updateDatalist31();
+      return result;
+    };
+  }
+
+  // 혹시 submit 이벤트가 이전 함수로 묶여 있어도, 캡처 단계에서 먼저 채움
+  document.addEventListener("submit", (event) => {
+    if (event.target && event.target.id === "problemForm") {
+      fillIfBlank31();
+      updateDatalist31();
+    }
+  }, true);
+
+  document.addEventListener("input", (event) => {
+    if (event.target && event.target.id === "categoryInput") {
+      setLastCat31(event.target.value);
+      updateDatalist31();
+    }
+  }, true);
+
+  document.addEventListener("change", (event) => {
+    if (event.target && event.target.id === "categoryInput") {
+      setLastCat31(event.target.value);
+      updateDatalist31();
+    }
+  }, true);
+
+  // 기존 reset/save 버튼 리스너가 먼저 실행되어도 직후 복구
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!target) return;
+    const clicked = target.closest?.("#resetFormBtn, #saveProblemBtn, #saveOnlyBtn, #newProblemModeBtn");
+    if (!clicked) return;
+    fillIfBlank31();
+    setTimeout(() => { fillIfBlank31(); updateDatalist31(); }, 80);
+    setTimeout(() => { fillIfBlank31(); updateDatalist31(); }, 350);
+  }, true);
+
+  // 목록/복습/문제풀기 필터는 기존 함수가 다시 그린 뒤에도 채움
+  if (typeof refresh === "function") {
+    const oldRefresh31 = refresh;
+    refresh = async function(...args) {
+      const result = await oldRefresh31.apply(this, args);
+      fillIfBlank31();
+      updateDatalist31();
+      return result;
+    };
+  }
+
+  function boot31() {
+    fillIfBlank31();
+    updateDatalist31();
+  }
+  [100, 400, 900, 1600, 3000].forEach(ms => setTimeout(boot31, ms));
+
+  // addView에서 빈칸으로 돌아가는 순간 계속 복구
+  setInterval(() => {
+    const addView = document.getElementById("addView");
+    if (addView?.classList.contains("active")) fillIfBlank31();
+  }, 500);
+})();

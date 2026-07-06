@@ -1580,3 +1580,13 @@ body.reorder-active * {
 #categoryInput::placeholder {
   color: #94a3b8;
 }
+
+/* === v30 중간분류 이전값 유지 보정 === */
+#categoryInput {
+  font-weight: 800;
+}
+
+/* === v31 중간분류 강제 유지 === */
+#categoryInput {
+  font-weight: 900 !important;
+}

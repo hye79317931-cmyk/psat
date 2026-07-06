@@ -7,7 +7,7 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="assets/icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=29" />
+  <link rel="stylesheet" href="styles.css?v=31" />
 </head>
 <body>
   <header class="app-header">
@@ -154,7 +154,7 @@
           </div>
           <div class="grid two mid-category-row">
             <label>중간분류
-              <input id="categoryInput" type="text" inputmode="text" placeholder="예: 독해, 논리, 계산, 상황판단 유형" />
+              <input id="categoryInput" type="text" inputmode="text" placeholder="예: 독해, 논리, 계산, 상황판단 유형" / list="categoryDatalistV30">
             </label>
           </div>
           <input id="difficultyInput" type="hidden" value="중" />
@@ -226,6 +226,8 @@
             <button id="newProblemModeBtn" class="secondary hidden" type="button">새 문제 등록 모드</button>
             <button id="resetFormBtn" class="secondary" type="button">새 문제로 초기화</button>
           </div>
+                  <datalist id="categoryDatalistV30"></datalist>
+                  <datalist id="categoryDatalistV31"></datalist>
         </form>
       </section>
     </section>
@@ -321,6 +323,6 @@
   </main>
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-  <script src="app.js?v=29"></script>
+  <script src="app.js?v=31"></script>
 </body>
 </html>
