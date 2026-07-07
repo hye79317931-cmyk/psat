@@ -3956,3 +3956,231 @@ setTimeout(() => {
     if (addView?.classList.contains("active")) fillIfBlank31();
   }, 500);
 })();
+
+
+/* === v32: 대분류별 중간분류 기억 === */
+(function midCategoryBySubjectV32(){
+  const GLOBAL_KEY = "psatLastMidCategoryV32";
+  const BY_SUBJECT_KEY = "psatLastMidCategoryBySubjectV32";
+
+  function input() { return document.getElementById("categoryInput"); }
+  function subjectEl() { return document.getElementById("subjectInput"); }
+  function clean(v) { return String(v || "").trim(); }
+  function subj(v) { 
+    try { return canonicalSubject(v || subjectEl()?.value || "언어"); }
+    catch { return clean(v || subjectEl()?.value || "언어") || "언어"; }
+  }
+  function readPrefs() {
+    try { return JSON.parse(localStorage.getItem(FORM_PREF_KEY) || "{}") || {}; }
+    catch { return {}; }
+  }
+  function writePrefs(p) {
+    try { localStorage.setItem(FORM_PREF_KEY, JSON.stringify(p || {})); } catch {}
+  }
+  function readMap() {
+    try { return JSON.parse(localStorage.getItem(BY_SUBJECT_KEY) || "{}") || {}; }
+    catch { return {}; }
+  }
+  function writeMap(map) {
+    try { localStorage.setItem(BY_SUBJECT_KEY, JSON.stringify(map || {})); } catch {}
+  }
+  function remember(category, subject) {
+    const c = clean(category);
+    if (!c) return;
+    const s = subj(subject);
+    const map = readMap();
+    map[s] = c;
+    writeMap(map);
+    localStorage.setItem(GLOBAL_KEY, c);
+
+    const prefs = readPrefs();
+    prefs.category = c;
+    prefs.categoryBySubject = map;
+    prefs.subject = s;
+    prefs.year = normalizedYear(els.yearInput?.value ?? prefs.year ?? "");
+    prefs.imageQuality = els.imageQualityInput?.value || prefs.imageQuality || "sharp";
+    writePrefs(prefs);
+  }
+  function remembered(subject) {
+    const s = subj(subject);
+    const prefs = readPrefs();
+    const map = Object.assign({}, prefs.categoryBySubject || {}, readMap());
+    return clean(map[s]) ||
+      clean(prefs.category) ||
+      clean(localStorage.getItem(GLOBAL_KEY)) ||
+      clean(localStorage.getItem("psatLastMidCategoryV31")) ||
+      clean(localStorage.getItem("psatLastMidCategoryV30")) ||
+      clean(localStorage.getItem("psatLastMidCategoryV29")) ||
+      "";
+  }
+  function setInput(category) {
+    const el = input();
+    if (!el) return "";
+    const c = clean(category);
+    if (c) el.value = c;
+    return clean(el.value);
+  }
+  function fillBlank(subject) {
+    const el = input();
+    if (!el) return "";
+    const current = clean(el.value);
+    if (current) {
+      remember(current, subject);
+      return current;
+    }
+    return setInput(remembered(subject));
+  }
+  function replaceForSubject(subject) {
+    const el = input();
+    if (!el) return "";
+    const c = remembered(subject);
+    el.value = c || "";
+    if (c) remember(c, subject);
+    return c;
+  }
+  function updateDatalist() {
+    const el = input();
+    if (!el) return;
+    el.setAttribute("list", "categoryDatalistV32");
+    let list = document.getElementById("categoryDatalistV32");
+    if (!list) {
+      list = document.createElement("datalist");
+      list.id = "categoryDatalistV32";
+      el.insertAdjacentElement("afterend", list);
+    }
+    const map = readMap();
+    const values = [...new Set([
+      ...Object.values(map),
+      remembered(subj()),
+      ...(state.problems || []).map(p => clean(p.category))
+    ].filter(Boolean))].sort((a,b) => a.localeCompare(b, "ko", { numeric:true, sensitivity:"base" }));
+    list.innerHTML = "";
+    for (const v of values) {
+      const opt = document.createElement("option");
+      opt.value = v;
+      list.appendChild(opt);
+    }
+  }
+
+  // 기존 saveFormPreferences가 빈칸을 저장하지 못하게 막음
+  if (typeof saveFormPreferences === "function") {
+    const oldSave = saveFormPreferences;
+    saveFormPreferences = function(...args) {
+      const before = fillBlank(subj());
+      const result = oldSave.apply(this, args);
+      const after = clean(input()?.value) || before || remembered(subj());
+      if (after) remember(after, subj());
+      updateDatalist();
+      return result;
+    };
+  }
+
+  if (typeof applyFormPreferences === "function") {
+    const oldApply = applyFormPreferences;
+    applyFormPreferences = function(...args) {
+      const result = oldApply.apply(this, args);
+      fillBlank(subj());
+      updateDatalist();
+      return result;
+    };
+  }
+
+  if (typeof resetForm === "function") {
+    const oldReset = resetForm;
+    resetForm = function(...args) {
+      const s = subj();
+      const keep = clean(input()?.value) || remembered(s);
+      if (keep) remember(keep, s);
+      const result = oldReset.apply(this, args);
+      setTimeout(() => {
+        const ss = subj();
+        const finalKeep = remembered(ss) || keep;
+        if (finalKeep) {
+          setInput(finalKeep);
+          remember(finalKeep, ss);
+        }
+        updateDatalist();
+      }, 0);
+      return result;
+    };
+  }
+
+  if (typeof editProblem === "function") {
+    const oldEdit = editProblem;
+    editProblem = function(problem, options = {}) {
+      const result = oldEdit.call(this, problem, options);
+      const s = subj(problem?.subject || subj());
+      const c = clean(problem?.category) || remembered(s);
+      if (c) {
+        setInput(c);
+        remember(c, s);
+      }
+      updateDatalist();
+      return result;
+    };
+  }
+
+  // 저장 전에는 무조건 빈칸 채움
+  document.addEventListener("submit", (event) => {
+    if (event.target?.id === "problemForm") {
+      fillBlank(subj());
+      updateDatalist();
+    }
+  }, true);
+
+  // 중간분류 직접 입력 시 해당 대분류에 저장
+  document.addEventListener("input", (event) => {
+    if (event.target?.id === "categoryInput") {
+      const c = clean(event.target.value);
+      if (c) remember(c, subj());
+      updateDatalist();
+    }
+  }, true);
+  document.addEventListener("change", (event) => {
+    if (event.target?.id === "categoryInput") {
+      const c = clean(event.target.value);
+      if (c) remember(c, subj());
+      updateDatalist();
+    }
+  }, true);
+
+  // 핵심: 대분류 바뀌면 그 대분류의 마지막 중간분류로 즉시 교체
+  document.addEventListener("change", (event) => {
+    if (event.target?.id === "subjectInput") {
+      const s = subj(event.target.value);
+      replaceForSubject(s);
+      updateDatalist();
+    }
+  }, true);
+
+  // 저장/초기화/새문제 버튼 직후에도 복구
+  document.addEventListener("click", (event) => {
+    const btn = event.target?.closest?.("#saveProblemBtn, #saveOnlyBtn, #resetFormBtn, #newProblemModeBtn");
+    if (!btn) return;
+    const s = subj();
+    fillBlank(s);
+    setTimeout(() => { fillBlank(subj()); updateDatalist(); }, 80);
+    setTimeout(() => { fillBlank(subj()); updateDatalist(); }, 350);
+  }, true);
+
+  if (typeof refresh === "function") {
+    const oldRefresh = refresh;
+    refresh = async function(...args) {
+      const result = await oldRefresh.apply(this, args);
+      fillBlank(subj());
+      updateDatalist();
+      return result;
+    };
+  }
+
+  function boot() {
+    fillBlank(subj());
+    updateDatalist();
+  }
+  [100, 400, 900, 1800, 3000].forEach(ms => setTimeout(boot, ms));
+
+  setInterval(() => {
+    const add = document.getElementById("addView");
+    if (add?.classList.contains("active")) fillBlank(subj());
+  }, 500);
+})();

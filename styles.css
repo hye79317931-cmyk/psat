@@ -1590,3 +1590,13 @@ body.reorder-active * {
 #categoryInput {
   font-weight: 900 !important;
 }
+
+/* === v32 대분류별 중간분류 기억 === */
+#categoryInput {
+  font-weight: 900 !important;
+}
+.category-memory-hint {
+  font-size: .78rem;
+  color: var(--muted);
+  margin-top: -4px;
+}
