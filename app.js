@@ -4432,3 +4432,26 @@ setTimeout(() => {
 
   setTimeout(bindViewer, 500);
 })();
+
+
+/* === v35: 해설보기 버튼 기존 이벤트 완전 차단 === */
+(function(){
+  const $=id=>document.getElementById(id); const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const V={s:1,x:0,y:0,min:.1,max:7,pts:new Map(),pan:null,pinch:null};
+  function cur(){return state&&state.current?state.current:null} function src(){return cur()?.explanationImageData||''} function txt(){return String(cur()?.explanation||'').trim()}
+  function apply(){const i=$('expImg35'); if(!i)return; i.style.transform=`translate(${V.x}px,${V.y}px) scale(${V.s})`; const l=$('expPct35'); if(l)l.textContent=Math.round(V.s*100)+'%'}
+  function fit(){const st=$('expStage35'), i=$('expImg35'); if(!st||!i||!i.naturalWidth)return; const sc=Math.min(st.clientWidth/i.naturalWidth, st.clientHeight/i.naturalHeight); V.min=Math.max(.05,sc*.45); V.s=Math.max(.05,sc); V.x=(st.clientWidth-i.naturalWidth*V.s)/2; V.y=(st.clientHeight-i.naturalHeight*V.s)/2; apply()}
+  function zoom(m,cx,cy){const st=$('expStage35'); if(!st)return; const r=st.getBoundingClientRect(), px=cx??r.left+r.width/2, py=cy??r.top+r.height/2, lx=px-r.left, ly=py-r.top, old=V.s, ns=clamp(old*m,V.min,V.max), ix=(lx-V.x)/old, iy=(ly-V.y)/old; V.s=ns; V.x=lx-ix*ns; V.y=ly-iy*ns; apply()}
+  function open(src0){const m=$('expFs35'), i=$('expImg35'); if(!m||!i||!src0)return; V.pts.clear(); i.onload=()=>setTimeout(fit,30); i.src=src0; m.classList.remove('hidden'); document.body.classList.add('exp-lock35'); document.documentElement.classList.add('exp-lock35'); setTimeout(fit,80); setTimeout(fit,300)}
+  function close(){ $('expFs35')?.classList.add('hidden'); document.body.classList.remove('exp-lock35'); document.documentElement.classList.remove('exp-lock35'); V.pts.clear() }
+  function bind(){const st=$('expStage35'); if(!st||st.dataset.v35)return; st.dataset.v35='1'; $('expClose35').onclick=close; $('expFit35').onclick=fit; $('expPlus35').onclick=()=>zoom(1.25); $('expMinus35').onclick=()=>zoom(.8);
+    const dist=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY), mid=(a,b)=>({x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2});
+    st.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();st.setPointerCapture?.(e.pointerId);V.pts.set(e.pointerId,e); if(V.pts.size===1){V.pan={x:e.clientX,y:e.clientY,bx:V.x,by:V.y};V.pinch=null}else{const p=[...V.pts.values()].slice(0,2),c=mid(p[0],p[1]);V.pinch={d:Math.max(1,dist(p[0],p[1])),s:V.s,cx:c.x,cy:c.y,bx:V.x,by:V.y}}},{passive:false});
+    st.addEventListener('pointermove',e=>{if(!V.pts.has(e.pointerId))return; e.preventDefault();e.stopPropagation();V.pts.set(e.pointerId,e); if(V.pts.size>=2&&V.pinch){const p=[...V.pts.values()].slice(0,2),c=mid(p[0],p[1]),r=st.getBoundingClientRect(),P=V.pinch; V.s=clamp(P.s*dist(p[0],p[1])/P.d,V.min,V.max); const ix=(P.cx-r.left-P.bx)/P.s, iy=(P.cy-r.top-P.by)/P.s; V.x=(c.x-r.left)-ix*V.s; V.y=(c.y-r.top)-iy*V.s; apply(); return} if(V.pan){V.x=V.pan.bx+e.clientX-V.pan.x;V.y=V.pan.by+e.clientY-V.pan.y;apply()}},{passive:false});
+    const end=e=>{V.pts.delete(e.pointerId); if(V.pts.size===1){const p=[...V.pts.values()][0]; V.pan={x:p.clientX,y:p.clientY,bx:V.x,by:V.y}; V.pinch=null}else{V.pan=null;V.pinch=null}}; st.addEventListener('pointerup',end); st.addEventListener('pointercancel',end); st.addEventListener('lostpointercapture',end);
+  }
+  function render(){const box=$('explanationBox'), p=cur(); if(!box||!p){try{showToast('현재 문제가 없어')}catch{};return} const s=src(), t=txt(); box.classList.remove('hidden'); box.innerHTML=''; if(s){const b=document.createElement('button'); b.type='button'; b.className='secondary exp-open35'; b.textContent='해설 전체화면으로 보기'; b.onclick=e=>{e.preventDefault();e.stopPropagation();open(s)}; box.appendChild(b); const im=document.createElement('img'); im.className='exp-v35-img'; im.src=s; im.alt='해설 이미지'; im.onclick=()=>open(s); box.appendChild(im)} if(t){const d=document.createElement('div'); d.className='exp-v35-text'; d.textContent=t; box.appendChild(d)} if(!s&&!t)box.innerHTML='<p class="hint">등록된 해설이 없어.</p>'; bind()}
+  showExplanation=render;
+  document.addEventListener('click',e=>{const b=e.target?.closest?.('#showExpBtn'); if(!b)return; e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); render()},true);
+  setTimeout(()=>{const b=$('showExpBtn'); if(b)b.onclick=e=>{e.preventDefault();e.stopPropagation();render()}; bind()},500);
+})();
