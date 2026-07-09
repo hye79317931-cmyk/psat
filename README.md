@@ -67,3 +67,5 @@
 ## v34 explanation modal insertion fix
 - v33에서 전체화면 모달 HTML 삽입이 누락될 수 있던 문제 수정
 - 해설 전체화면 보기 버튼/모달을 확실히 포함
+
+- 재배포
