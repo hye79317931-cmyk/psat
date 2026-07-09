@@ -4434,24 +4434,260 @@ setTimeout(() => {
 })();
 
 
-/* === v35: 해설보기 버튼 기존 이벤트 완전 차단 === */
-(function(){
-  const $=id=>document.getElementById(id); const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-  const V={s:1,x:0,y:0,min:.1,max:7,pts:new Map(),pan:null,pinch:null};
-  function cur(){return state&&state.current?state.current:null} function src(){return cur()?.explanationImageData||''} function txt(){return String(cur()?.explanation||'').trim()}
-  function apply(){const i=$('expImg35'); if(!i)return; i.style.transform=`translate(${V.x}px,${V.y}px) scale(${V.s})`; const l=$('expPct35'); if(l)l.textContent=Math.round(V.s*100)+'%'}
-  function fit(){const st=$('expStage35'), i=$('expImg35'); if(!st||!i||!i.naturalWidth)return; const sc=Math.min(st.clientWidth/i.naturalWidth, st.clientHeight/i.naturalHeight); V.min=Math.max(.05,sc*.45); V.s=Math.max(.05,sc); V.x=(st.clientWidth-i.naturalWidth*V.s)/2; V.y=(st.clientHeight-i.naturalHeight*V.s)/2; apply()}
-  function zoom(m,cx,cy){const st=$('expStage35'); if(!st)return; const r=st.getBoundingClientRect(), px=cx??r.left+r.width/2, py=cy??r.top+r.height/2, lx=px-r.left, ly=py-r.top, old=V.s, ns=clamp(old*m,V.min,V.max), ix=(lx-V.x)/old, iy=(ly-V.y)/old; V.s=ns; V.x=lx-ix*ns; V.y=ly-iy*ns; apply()}
-  function open(src0){const m=$('expFs35'), i=$('expImg35'); if(!m||!i||!src0)return; V.pts.clear(); i.onload=()=>setTimeout(fit,30); i.src=src0; m.classList.remove('hidden'); document.body.classList.add('exp-lock35'); document.documentElement.classList.add('exp-lock35'); setTimeout(fit,80); setTimeout(fit,300)}
-  function close(){ $('expFs35')?.classList.add('hidden'); document.body.classList.remove('exp-lock35'); document.documentElement.classList.remove('exp-lock35'); V.pts.clear() }
-  function bind(){const st=$('expStage35'); if(!st||st.dataset.v35)return; st.dataset.v35='1'; $('expClose35').onclick=close; $('expFit35').onclick=fit; $('expPlus35').onclick=()=>zoom(1.25); $('expMinus35').onclick=()=>zoom(.8);
-    const dist=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY), mid=(a,b)=>({x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2});
-    st.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();st.setPointerCapture?.(e.pointerId);V.pts.set(e.pointerId,e); if(V.pts.size===1){V.pan={x:e.clientX,y:e.clientY,bx:V.x,by:V.y};V.pinch=null}else{const p=[...V.pts.values()].slice(0,2),c=mid(p[0],p[1]);V.pinch={d:Math.max(1,dist(p[0],p[1])),s:V.s,cx:c.x,cy:c.y,bx:V.x,by:V.y}}},{passive:false});
-    st.addEventListener('pointermove',e=>{if(!V.pts.has(e.pointerId))return; e.preventDefault();e.stopPropagation();V.pts.set(e.pointerId,e); if(V.pts.size>=2&&V.pinch){const p=[...V.pts.values()].slice(0,2),c=mid(p[0],p[1]),r=st.getBoundingClientRect(),P=V.pinch; V.s=clamp(P.s*dist(p[0],p[1])/P.d,V.min,V.max); const ix=(P.cx-r.left-P.bx)/P.s, iy=(P.cy-r.top-P.by)/P.s; V.x=(c.x-r.left)-ix*V.s; V.y=(c.y-r.top)-iy*V.s; apply(); return} if(V.pan){V.x=V.pan.bx+e.clientX-V.pan.x;V.y=V.pan.by+e.clientY-V.pan.y;apply()}},{passive:false});
-    const end=e=>{V.pts.delete(e.pointerId); if(V.pts.size===1){const p=[...V.pts.values()][0]; V.pan={x:p.clientX,y:p.clientY,bx:V.x,by:V.y}; V.pinch=null}else{V.pan=null;V.pinch=null}}; st.addEventListener('pointerup',end); st.addEventListener('pointercancel',end); st.addEventListener('lostpointercapture',end);
+/* === v36: 해설보기 버튼/확대/전체화면 최종 교체 === */
+(function explanationZoomDeployFixV36(){
+  const viewer = {
+    scale: 1,
+    x: 0,
+    y: 0,
+    minScale: 0.1,
+    maxScale: 7,
+    points: new Map(),
+    pan: null,
+    pinch: null
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+  function problem() { return window.state?.current || (typeof state !== "undefined" ? state.current : null); }
+  function expSrc() { return problem()?.explanationImageData || ""; }
+  function expText() { return String(problem()?.explanation || "").trim(); }
+
+  function updateLabel() {
+    const label = $("expZoomLabelV36");
+    if (label) label.textContent = Math.round(viewer.scale * 100) + "%";
   }
-  function render(){const box=$('explanationBox'), p=cur(); if(!box||!p){try{showToast('현재 문제가 없어')}catch{};return} const s=src(), t=txt(); box.classList.remove('hidden'); box.innerHTML=''; if(s){const b=document.createElement('button'); b.type='button'; b.className='secondary exp-open35'; b.textContent='해설 전체화면으로 보기'; b.onclick=e=>{e.preventDefault();e.stopPropagation();open(s)}; box.appendChild(b); const im=document.createElement('img'); im.className='exp-v35-img'; im.src=s; im.alt='해설 이미지'; im.onclick=()=>open(s); box.appendChild(im)} if(t){const d=document.createElement('div'); d.className='exp-v35-text'; d.textContent=t; box.appendChild(d)} if(!s&&!t)box.innerHTML='<p class="hint">등록된 해설이 없어.</p>'; bind()}
-  showExplanation=render;
-  document.addEventListener('click',e=>{const b=e.target?.closest?.('#showExpBtn'); if(!b)return; e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); render()},true);
-  setTimeout(()=>{const b=$('showExpBtn'); if(b)b.onclick=e=>{e.preventDefault();e.stopPropagation();render()}; bind()},500);
+
+  function applyTransform() {
+    const img = $("expImgV36");
+    if (!img) return;
+    img.style.transform = `translate(${viewer.x}px, ${viewer.y}px) scale(${viewer.scale})`;
+    updateLabel();
+  }
+
+  function fit() {
+    const stage = $("expStageV36");
+    const img = $("expImgV36");
+    if (!stage || !img || !img.naturalWidth || !img.naturalHeight) return;
+    const sw = Math.max(1, stage.clientWidth);
+    const sh = Math.max(1, stage.clientHeight);
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    const scale = Math.min(sw / iw, sh / ih);
+    viewer.minScale = Math.max(0.05, scale * 0.45);
+    viewer.scale = Math.max(0.05, scale);
+    viewer.x = (sw - iw * viewer.scale) / 2;
+    viewer.y = (sh - ih * viewer.scale) / 2;
+    applyTransform();
+  }
+
+  function zoom(mult, cx, cy) {
+    const stage = $("expStageV36");
+    if (!stage) return;
+    const rect = stage.getBoundingClientRect();
+    const px = cx == null ? rect.left + rect.width / 2 : cx;
+    const py = cy == null ? rect.top + rect.height / 2 : cy;
+    const localX = px - rect.left;
+    const localY = py - rect.top;
+    const oldScale = viewer.scale;
+    const next = clamp(oldScale * mult, viewer.minScale, viewer.maxScale);
+    const imageX = (localX - viewer.x) / oldScale;
+    const imageY = (localY - viewer.y) / oldScale;
+    viewer.scale = next;
+    viewer.x = localX - imageX * next;
+    viewer.y = localY - imageY * next;
+    applyTransform();
+  }
+
+  function openFull(src) {
+    const modal = $("expFullscreenV36");
+    const img = $("expImgV36");
+    if (!modal || !img || !src) {
+      try { showToast("해설 이미지가 없어"); } catch {}
+      return;
+    }
+    viewer.points.clear();
+    viewer.pan = null;
+    viewer.pinch = null;
+    img.onload = () => setTimeout(fit, 30);
+    img.src = src;
+    modal.classList.remove("hidden");
+    document.documentElement.classList.add("exp-fullscreen-open-v36");
+    document.body.classList.add("exp-fullscreen-open-v36");
+    setTimeout(fit, 80);
+    setTimeout(fit, 300);
+  }
+
+  function closeFull() {
+    $("expFullscreenV36")?.classList.add("hidden");
+    document.documentElement.classList.remove("exp-fullscreen-open-v36");
+    document.body.classList.remove("exp-fullscreen-open-v36");
+    viewer.points.clear();
+    viewer.pan = null;
+    viewer.pinch = null;
+  }
+
+  function dist(a,b) { return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
+  function mid(a,b) { return { x:(a.clientX+b.clientX)/2, y:(a.clientY+b.clientY)/2 }; }
+
+  function bindFullViewer() {
+    const stage = $("expStageV36");
+    if (!stage || stage.dataset.v36Ready) return;
+    stage.dataset.v36Ready = "1";
+
+    $("expCloseV36") && ($("expCloseV36").onclick = closeFull);
+    $("expFitV36") && ($("expFitV36").onclick = fit);
+    $("expZoomInV36") && ($("expZoomInV36").onclick = () => zoom(1.25));
+    $("expZoomOutV36") && ($("expZoomOutV36").onclick = () => zoom(0.8));
+
+    stage.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      stage.setPointerCapture?.(event.pointerId);
+      viewer.points.set(event.pointerId, event);
+
+      if (viewer.points.size === 1) {
+        viewer.pan = { x:event.clientX, y:event.clientY, baseX:viewer.x, baseY:viewer.y };
+        viewer.pinch = null;
+      } else {
+        const pts = [...viewer.points.values()].slice(0,2);
+        const c = mid(pts[0], pts[1]);
+        viewer.pinch = {
+          dist: Math.max(1, dist(pts[0], pts[1])),
+          scale: viewer.scale,
+          centerX: c.x,
+          centerY: c.y,
+          baseX: viewer.x,
+          baseY: viewer.y
+        };
+      }
+    }, { passive:false });
+
+    stage.addEventListener("pointermove", (event) => {
+      if (!viewer.points.has(event.pointerId)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      viewer.points.set(event.pointerId, event);
+
+      if (viewer.points.size >= 2 && viewer.pinch) {
+        const pts = [...viewer.points.values()].slice(0,2);
+        const c = mid(pts[0], pts[1]);
+        const start = viewer.pinch;
+        viewer.scale = clamp(start.scale * dist(pts[0], pts[1]) / start.dist, viewer.minScale, viewer.maxScale);
+        const rect = stage.getBoundingClientRect();
+        const localStartX = start.centerX - rect.left;
+        const localStartY = start.centerY - rect.top;
+        const imageX = (localStartX - start.baseX) / start.scale;
+        const imageY = (localStartY - start.baseY) / start.scale;
+        viewer.x = (c.x - rect.left) - imageX * viewer.scale;
+        viewer.y = (c.y - rect.top) - imageY * viewer.scale;
+        applyTransform();
+        return;
+      }
+
+      if (viewer.points.size === 1 && viewer.pan) {
+        viewer.x = viewer.pan.baseX + (event.clientX - viewer.pan.x);
+        viewer.y = viewer.pan.baseY + (event.clientY - viewer.pan.y);
+        applyTransform();
+      }
+    }, { passive:false });
+
+    const end = (event) => {
+      viewer.points.delete(event.pointerId);
+      if (viewer.points.size === 1) {
+        const p = [...viewer.points.values()][0];
+        viewer.pan = { x:p.clientX, y:p.clientY, baseX:viewer.x, baseY:viewer.y };
+        viewer.pinch = null;
+      } else {
+        viewer.pan = null;
+        viewer.pinch = null;
+      }
+    };
+    stage.addEventListener("pointerup", end);
+    stage.addEventListener("pointercancel", end);
+    stage.addEventListener("lostpointercapture", end);
+    window.addEventListener("resize", () => {
+      const modal = $("expFullscreenV36");
+      if (modal && !modal.classList.contains("hidden")) setTimeout(fit, 120);
+    });
+  }
+
+  function renderExplanation() {
+    const box = $("explanationBox");
+    const p = problem();
+    if (!box || !p) {
+      try { showToast("현재 문제가 없어"); } catch {}
+      return;
+    }
+
+    const src = expSrc();
+    const text = expText();
+    box.classList.remove("hidden");
+    box.innerHTML = "";
+
+    if (src) {
+      const openBtn = document.createElement("button");
+      openBtn.id = "expOpenFullscreenV36";
+      openBtn.type = "button";
+      openBtn.className = "secondary exp-open-btn-v36";
+      openBtn.textContent = "해설 전체화면으로 보기";
+      openBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openFull(src);
+      });
+      box.appendChild(openBtn);
+
+      const img = document.createElement("img");
+      img.className = "explanation-v36-img";
+      img.alt = "해설 이미지";
+      img.src = src;
+      img.addEventListener("click", () => openFull(src));
+      box.appendChild(img);
+
+      // 사용자 요청 기준: 해설보기 누르면 바로 전체화면으로 열리게 함
+      setTimeout(() => openFull(src), 30);
+    }
+
+    if (text) {
+      const div = document.createElement("div");
+      div.className = "explanation-v36-text";
+      div.textContent = text;
+      box.appendChild(div);
+    }
+
+    if (!src && !text) {
+      box.innerHTML = '<p class="hint">등록된 해설이 없어.</p>';
+    }
+
+    bindFullViewer();
+  }
+
+  // 기존 showExplanation 함수 자체 교체
+  window.showExplanation = renderExplanation;
+  try { showExplanation = renderExplanation; } catch {}
+
+  // 핵심: 예전 해설보기 이벤트가 실행되기 전에 캡처 단계에서 차단
+  document.addEventListener("click", (event) => {
+    const btn = event.target?.closest?.("#showExpBtn");
+    if (!btn) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    renderExplanation();
+  }, true);
+
+  function bindButton() {
+    const btn = $("showExpBtn");
+    if (btn) {
+      btn.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        renderExplanation();
+      };
+    }
+    bindFullViewer();
+  }
+
+  [100, 500, 1200, 2500].forEach(ms => setTimeout(bindButton, ms));
 })();
