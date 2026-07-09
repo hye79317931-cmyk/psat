@@ -1600,3 +1600,72 @@ body.reorder-active * {
   color: var(--muted);
   margin-top: -4px;
 }
+
+/* === v33 해설보기 전체화면 복구/고정 === */
+.exp-fullscreen-v33 {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 999999 !important;
+  background: rgba(15,23,42,.96) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  touch-action: none !important;
+}
+.exp-fullscreen-v33.hidden {
+  display: none !important;
+}
+.exp-fullscreen-toolbar-v33 {
+  flex: 0 0 auto !important;
+  display: flex !important;
+  gap: 6px !important;
+  align-items: center !important;
+  padding: max(8px, env(safe-area-inset-top)) 8px 8px !important;
+  background: rgba(2,6,23,.92) !important;
+  border-bottom: 1px solid rgba(255,255,255,.16) !important;
+  overflow-x: auto !important;
+  white-space: nowrap !important;
+}
+.exp-fullscreen-toolbar-v33 button {
+  border: 0 !important;
+  border-radius: 999px !important;
+  padding: 8px 12px !important;
+  background: #fff !important;
+  color: #111827 !important;
+  font-weight: 900 !important;
+  font-size: .86rem !important;
+}
+#expZoomLabelV33 {
+  color: #fff !important;
+  font-weight: 900 !important;
+  font-size: .86rem !important;
+  padding: 0 4px !important;
+}
+.exp-stage-v33 {
+  flex: 1 1 auto !important;
+  position: relative !important;
+  overflow: hidden !important;
+  touch-action: none !important;
+  background: #111827 !important;
+}
+#expImgV33 {
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform-origin: 0 0 !important;
+  user-select: none !important;
+  -webkit-user-drag: none !important;
+  will-change: transform !important;
+  background: #fff !important;
+}
+.exp-fullscreen-open-v33 {
+  overflow: hidden !important;
+}
+.exp-open-btn-v33 {
+  margin-top: 8px !important;
+  width: 100% !important;
+  border-radius: 14px !important;
+  padding: 10px !important;
+  font-weight: 950 !important;
+}

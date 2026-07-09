@@ -4184,3 +4184,251 @@ setTimeout(() => {
     if (add?.classList.contains("active")) fillBlank(subj());
   }, 500);
 })();
+
+
+/* === v33: 해설보기 전체화면 복구/충돌 방지 === */
+(function explanationFullscreenFixV33(){
+  const viewer = {
+    src: "",
+    scale: 1,
+    x: 0,
+    y: 0,
+    minScale: 0.2,
+    maxScale: 6,
+    pointerMap: new Map(),
+    panStart: null,
+    pinchStart: null
+  };
+
+  function q(id) { return document.getElementById(id); }
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+  function imgEl() { return q("expImgV33"); }
+  function stageEl() { return q("expStageV33"); }
+  function modalEl() { return q("expFullscreenV33"); }
+
+  function updateLabel() {
+    const label = q("expZoomLabelV33");
+    if (label) label.textContent = Math.round(viewer.scale * 100) + "%";
+  }
+  function applyTransform() {
+    const img = imgEl();
+    if (!img) return;
+    img.style.transform = `translate(${viewer.x}px, ${viewer.y}px) scale(${viewer.scale})`;
+    updateLabel();
+  }
+  function fitViewer() {
+    const stage = stageEl();
+    const img = imgEl();
+    if (!stage || !img || !img.naturalWidth || !img.naturalHeight) return;
+    const sw = Math.max(1, stage.clientWidth);
+    const sh = Math.max(1, stage.clientHeight);
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    const scale = Math.min(sw / iw, sh / ih);
+    viewer.minScale = Math.max(0.05, scale * 0.45);
+    viewer.scale = Math.max(0.05, scale);
+    viewer.x = (sw - iw * viewer.scale) / 2;
+    viewer.y = (sh - ih * viewer.scale) / 2;
+    applyTransform();
+  }
+  function zoomAt(delta, cx, cy) {
+    const stage = stageEl();
+    if (!stage) return;
+    const rect = stage.getBoundingClientRect();
+    const px = cx == null ? rect.left + rect.width / 2 : cx;
+    const py = cy == null ? rect.top + rect.height / 2 : cy;
+    const old = viewer.scale;
+    const next = clamp(old * delta, viewer.minScale, viewer.maxScale);
+    const localX = px - rect.left;
+    const localY = py - rect.top;
+    const imageX = (localX - viewer.x) / old;
+    const imageY = (localY - viewer.y) / old;
+    viewer.scale = next;
+    viewer.x = localX - imageX * next;
+    viewer.y = localY - imageY * next;
+    applyTransform();
+  }
+  function openViewer(src) {
+    const modal = modalEl();
+    const img = imgEl();
+    if (!modal || !img || !src) return;
+    viewer.src = src;
+    viewer.pointerMap.clear();
+    viewer.panStart = null;
+    viewer.pinchStart = null;
+    img.onload = () => setTimeout(fitViewer, 30);
+    img.src = src;
+    modal.classList.remove("hidden");
+    document.documentElement.classList.add("exp-fullscreen-open-v33");
+    document.body.classList.add("exp-fullscreen-open-v33");
+    setTimeout(fitViewer, 80);
+    setTimeout(fitViewer, 300);
+  }
+  function closeViewer() {
+    const modal = modalEl();
+    if (modal) modal.classList.add("hidden");
+    document.documentElement.classList.remove("exp-fullscreen-open-v33");
+    document.body.classList.remove("exp-fullscreen-open-v33");
+    viewer.pointerMap.clear();
+    viewer.panStart = null;
+    viewer.pinchStart = null;
+  }
+  function distance(a, b) {
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  }
+  function center(a, b) {
+    return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+  }
+  function bindViewer() {
+    const modal = modalEl();
+    const stage = stageEl();
+    const close = q("expCloseV33");
+    const fit = q("expFitV33");
+    const zin = q("expZoomInV33");
+    const zout = q("expZoomOutV33");
+    if (!modal || !stage || stage.dataset.v33Ready) return;
+    stage.dataset.v33Ready = "1";
+
+    close && (close.onclick = closeViewer);
+    fit && (fit.onclick = fitViewer);
+    zin && (zin.onclick = () => zoomAt(1.25));
+    zout && (zout.onclick = () => zoomAt(0.8));
+
+    stage.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      stage.setPointerCapture?.(event.pointerId);
+      viewer.pointerMap.set(event.pointerId, event);
+
+      if (viewer.pointerMap.size === 1) {
+        viewer.panStart = { x: event.clientX, y: event.clientY, baseX: viewer.x, baseY: viewer.y };
+        viewer.pinchStart = null;
+      } else if (viewer.pointerMap.size >= 2) {
+        const pts = [...viewer.pointerMap.values()].slice(0, 2);
+        const c = center(pts[0], pts[1]);
+        viewer.pinchStart = {
+          dist: distance(pts[0], pts[1]),
+          scale: viewer.scale,
+          centerX: c.x,
+          centerY: c.y,
+          baseX: viewer.x,
+          baseY: viewer.y
+        };
+      }
+    }, { passive: false });
+
+    stage.addEventListener("pointermove", (event) => {
+      if (!viewer.pointerMap.has(event.pointerId)) return;
+      event.preventDefault();
+      viewer.pointerMap.set(event.pointerId, event);
+
+      if (viewer.pointerMap.size >= 2 && viewer.pinchStart) {
+        const pts = [...viewer.pointerMap.values()].slice(0, 2);
+        const c = center(pts[0], pts[1]);
+        const start = viewer.pinchStart;
+        const ratio = distance(pts[0], pts[1]) / Math.max(1, start.dist);
+        viewer.scale = clamp(start.scale * ratio, viewer.minScale, viewer.maxScale);
+        const stageRect = stage.getBoundingClientRect();
+        const localX = start.centerX - stageRect.left;
+        const localY = start.centerY - stageRect.top;
+        const imageX = (localX - start.baseX) / start.scale;
+        const imageY = (localY - start.baseY) / start.scale;
+        viewer.x = (c.x - stageRect.left) - imageX * viewer.scale;
+        viewer.y = (c.y - stageRect.top) - imageY * viewer.scale;
+        applyTransform();
+        return;
+      }
+
+      if (viewer.pointerMap.size === 1 && viewer.panStart) {
+        viewer.x = viewer.panStart.baseX + (event.clientX - viewer.panStart.x);
+        viewer.y = viewer.panStart.baseY + (event.clientY - viewer.panStart.y);
+        applyTransform();
+      }
+    }, { passive: false });
+
+    const end = (event) => {
+      viewer.pointerMap.delete(event.pointerId);
+      if (viewer.pointerMap.size === 1) {
+        const remaining = [...viewer.pointerMap.values()][0];
+        viewer.panStart = { x: remaining.clientX, y: remaining.clientY, baseX: viewer.x, baseY: viewer.y };
+        viewer.pinchStart = null;
+      } else {
+        viewer.panStart = null;
+        viewer.pinchStart = null;
+      }
+    };
+    stage.addEventListener("pointerup", end);
+    stage.addEventListener("pointercancel", end);
+    stage.addEventListener("lostpointercapture", end);
+
+    window.addEventListener("resize", () => {
+      if (!modal.classList.contains("hidden")) setTimeout(fitViewer, 120);
+    });
+  }
+
+  function getCurrentExplanationSrc() {
+    const direct = document.querySelector("#explanationBox img, #explanationBox .exp-image, #explanationBox .explanation-image");
+    if (direct?.src) return direct.src;
+    const p = state?.current;
+    return p?.explanationImageData || "";
+  }
+
+  function addOpenButton() {
+    const box = q("explanationBox");
+    if (!box) return;
+    let btn = q("expOpenFullscreenV33");
+    if (!btn) {
+      btn = document.createElement("button");
+      btn.id = "expOpenFullscreenV33";
+      btn.type = "button";
+      btn.className = "secondary exp-open-btn-v33";
+      btn.textContent = "해설 전체화면으로 보기";
+      btn.onclick = () => {
+        const src = getCurrentExplanationSrc();
+        if (!src) {
+          try { showToast("해설 이미지가 없어"); } catch {}
+          return;
+        }
+        openViewer(src);
+      };
+    }
+    if (!box.contains(btn)) box.appendChild(btn);
+  }
+
+  const oldShowExplanation = typeof showExplanation === "function" ? showExplanation : null;
+  showExplanation = function(...args) {
+    try {
+      if (oldShowExplanation) oldShowExplanation.apply(this, args);
+    } catch (err) {
+      console.error("old showExplanation failed", err);
+    }
+
+    const box = q("explanationBox");
+    const p = state?.current;
+    if (box) {
+      box.classList.remove("hidden");
+      const hasImg = !!p?.explanationImageData;
+      const text = String(p?.explanation || "").trim();
+
+      if (!box.querySelector("img") && hasImg) {
+        const img = document.createElement("img");
+        img.src = p.explanationImageData;
+        img.alt = "해설 이미지";
+        img.style.maxWidth = "100%";
+        img.style.display = "block";
+        img.style.borderRadius = "12px";
+        img.style.background = "#fff";
+        box.prepend(img);
+      }
+      if (!box.textContent.trim() && text) {
+        const div = document.createElement("div");
+        div.textContent = text;
+        box.appendChild(div);
+      }
+      addOpenButton();
+    }
+
+    bindViewer();
+  };
+
+  setTimeout(bindViewer, 500);
+})();

@@ -4,8 +4,8 @@ const CACHE_NAME = 'psat-random-note-v29';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css?v=32',
-  './app.js?v=32',
+  './styles.css?v=34',
+  './app.js?v=34',
   './manifest.webmanifest',
   './assets/icon-192.png',
   './assets/icon-512.png'
