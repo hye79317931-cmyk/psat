@@ -76,3 +76,12 @@
 - 확대/축소/맞춤/닫기 버튼 포함
 - GitHub Pages 배포 트리거용 deploy-version.txt 추가
 - 생성시각: 2026-07-09T08:56:50.146660
+
+
+## v37 touch pinch fix
+- v36의 pointer 기반 확대가 일부 Android Chrome/PWA에서 안 먹는 문제 보정
+- 해설 전체화면에 raw touchstart/touchmove 직접 처리 추가
+- 손가락 1개 이동, 손가락 2개 확대/축소를 touch 좌표로 계산
+- 확대/축소/맞춤 버튼 유지
+- deploy-version.txt 갱신
+- 생성시각: 2026-07-09T09:24:01.573862

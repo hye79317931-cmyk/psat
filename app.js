@@ -4691,3 +4691,374 @@ setTimeout(() => {
 
   [100, 500, 1200, 2500].forEach(ms => setTimeout(bindButton, ms));
 })();
+
+
+/* === v37: 해설 확대 touch events 직접 계산 === */
+(function explanationTouchPinchFixV37(){
+  const viewer = {
+    scale: 1,
+    x: 0,
+    y: 0,
+    minScale: 0.1,
+    maxScale: 8,
+    activePointers: new Map(),
+    pointerPan: null,
+    pointerPinch: null,
+    touchMode: "",
+    touchPan: null,
+    touchPinch: null
+  };
+
+  function q(id) { return document.getElementById(id); }
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+  function currentProblem() {
+    try { return state?.current || null; } catch { return null; }
+  }
+  function expSrc() { return currentProblem()?.explanationImageData || ""; }
+  function expText() { return String(currentProblem()?.explanation || "").trim(); }
+  function stage() { return q("expStageV37"); }
+  function img() { return q("expImgV37"); }
+
+  function label() {
+    const l = q("expZoomLabelV37");
+    if (l) l.textContent = Math.round(viewer.scale * 100) + "%";
+  }
+  function apply() {
+    const image = img();
+    if (!image) return;
+    image.style.transform = `translate(${viewer.x}px, ${viewer.y}px) scale(${viewer.scale})`;
+    label();
+  }
+  function fit() {
+    const st = stage();
+    const image = img();
+    if (!st || !image || !image.naturalWidth || !image.naturalHeight) return;
+    const sw = Math.max(1, st.clientWidth);
+    const sh = Math.max(1, st.clientHeight);
+    const iw = image.naturalWidth;
+    const ih = image.naturalHeight;
+    const s = Math.min(sw / iw, sh / ih);
+    viewer.minScale = Math.max(0.05, s * 0.4);
+    viewer.scale = Math.max(0.05, s);
+    viewer.x = (sw - iw * viewer.scale) / 2;
+    viewer.y = (sh - ih * viewer.scale) / 2;
+    apply();
+  }
+  function zoomAt(mult, clientX, clientY) {
+    const st = stage();
+    if (!st) return;
+    const rect = st.getBoundingClientRect();
+    const px = clientX == null ? rect.left + rect.width / 2 : clientX;
+    const py = clientY == null ? rect.top + rect.height / 2 : clientY;
+    const localX = px - rect.left;
+    const localY = py - rect.top;
+    const old = viewer.scale;
+    const next = clamp(old * mult, viewer.minScale, viewer.maxScale);
+    const imageX = (localX - viewer.x) / old;
+    const imageY = (localY - viewer.y) / old;
+    viewer.scale = next;
+    viewer.x = localX - imageX * next;
+    viewer.y = localY - imageY * next;
+    apply();
+  }
+  function closeFull() {
+    q("expFullscreenV37")?.classList.add("hidden");
+    document.documentElement.classList.remove("exp-fullscreen-open-v37");
+    document.body.classList.remove("exp-fullscreen-open-v37");
+    viewer.activePointers.clear();
+    viewer.pointerPan = null;
+    viewer.pointerPinch = null;
+    viewer.touchMode = "";
+    viewer.touchPan = null;
+    viewer.touchPinch = null;
+  }
+  function openFull(src) {
+    const modal = q("expFullscreenV37");
+    const image = img();
+    if (!modal || !image || !src) {
+      try { showToast("해설 이미지가 없어"); } catch {}
+      return;
+    }
+    viewer.activePointers.clear();
+    viewer.pointerPan = null;
+    viewer.pointerPinch = null;
+    viewer.touchMode = "";
+    viewer.touchPan = null;
+    viewer.touchPinch = null;
+    image.onload = () => setTimeout(fit, 30);
+    image.src = src;
+    modal.classList.remove("hidden");
+    document.documentElement.classList.add("exp-fullscreen-open-v37");
+    document.body.classList.add("exp-fullscreen-open-v37");
+    setTimeout(fit, 80);
+    setTimeout(fit, 300);
+  }
+
+  function dist(a, b) {
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  }
+  function mid(a, b) {
+    return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+  }
+
+  // Pointer fallback
+  function bindPointer(st) {
+    if (st.dataset.v37PointerReady) return;
+    st.dataset.v37PointerReady = "1";
+
+    st.addEventListener("pointerdown", (e) => {
+      if (e.pointerType === "mouse") return;
+      e.preventDefault();
+      e.stopPropagation();
+      st.setPointerCapture?.(e.pointerId);
+      viewer.activePointers.set(e.pointerId, e);
+
+      if (viewer.activePointers.size === 1) {
+        viewer.pointerPan = { x: e.clientX, y: e.clientY, baseX: viewer.x, baseY: viewer.y };
+        viewer.pointerPinch = null;
+      } else if (viewer.activePointers.size >= 2) {
+        const pts = [...viewer.activePointers.values()].slice(0, 2);
+        const c = mid(pts[0], pts[1]);
+        viewer.pointerPinch = {
+          dist: Math.max(1, dist(pts[0], pts[1])),
+          scale: viewer.scale,
+          centerX: c.x,
+          centerY: c.y,
+          baseX: viewer.x,
+          baseY: viewer.y
+        };
+      }
+    }, { passive: false });
+
+    st.addEventListener("pointermove", (e) => {
+      if (!viewer.activePointers.has(e.pointerId)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      viewer.activePointers.set(e.pointerId, e);
+
+      if (viewer.activePointers.size >= 2 && viewer.pointerPinch) {
+        const pts = [...viewer.activePointers.values()].slice(0, 2);
+        const c = mid(pts[0], pts[1]);
+        const start = viewer.pointerPinch;
+        viewer.scale = clamp(start.scale * dist(pts[0], pts[1]) / start.dist, viewer.minScale, viewer.maxScale);
+
+        const rect = st.getBoundingClientRect();
+        const localStartX = start.centerX - rect.left;
+        const localStartY = start.centerY - rect.top;
+        const imageX = (localStartX - start.baseX) / start.scale;
+        const imageY = (localStartY - start.baseY) / start.scale;
+        viewer.x = (c.x - rect.left) - imageX * viewer.scale;
+        viewer.y = (c.y - rect.top) - imageY * viewer.scale;
+        apply();
+        return;
+      }
+
+      if (viewer.activePointers.size === 1 && viewer.pointerPan) {
+        viewer.x = viewer.pointerPan.baseX + (e.clientX - viewer.pointerPan.x);
+        viewer.y = viewer.pointerPan.baseY + (e.clientY - viewer.pointerPan.y);
+        apply();
+      }
+    }, { passive: false });
+
+    const end = (e) => {
+      viewer.activePointers.delete(e.pointerId);
+      if (viewer.activePointers.size === 1) {
+        const p = [...viewer.activePointers.values()][0];
+        viewer.pointerPan = { x: p.clientX, y: p.clientY, baseX: viewer.x, baseY: viewer.y };
+        viewer.pointerPinch = null;
+      } else {
+        viewer.pointerPan = null;
+        viewer.pointerPinch = null;
+      }
+    };
+    st.addEventListener("pointerup", end);
+    st.addEventListener("pointercancel", end);
+    st.addEventListener("lostpointercapture", end);
+  }
+
+  // 핵심: Android Chrome용 raw touch handler
+  function touchPoint(t) {
+    return { clientX: t.clientX, clientY: t.clientY };
+  }
+  function bindTouch(st) {
+    if (st.dataset.v37TouchReady) return;
+    st.dataset.v37TouchReady = "1";
+
+    st.addEventListener("touchstart", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.touches.length === 1) {
+        const t = touchPoint(e.touches[0]);
+        viewer.touchMode = "pan";
+        viewer.touchPan = { x: t.clientX, y: t.clientY, baseX: viewer.x, baseY: viewer.y };
+        viewer.touchPinch = null;
+      } else if (e.touches.length >= 2) {
+        const a = touchPoint(e.touches[0]);
+        const b = touchPoint(e.touches[1]);
+        const c = mid(a, b);
+        viewer.touchMode = "pinch";
+        viewer.touchPinch = {
+          dist: Math.max(1, dist(a, b)),
+          scale: viewer.scale,
+          centerX: c.x,
+          centerY: c.y,
+          baseX: viewer.x,
+          baseY: viewer.y
+        };
+        viewer.touchPan = null;
+      }
+    }, { passive: false });
+
+    st.addEventListener("touchmove", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.touches.length >= 2 && viewer.touchPinch) {
+        const a = touchPoint(e.touches[0]);
+        const b = touchPoint(e.touches[1]);
+        const c = mid(a, b);
+        const start = viewer.touchPinch;
+
+        viewer.scale = clamp(start.scale * dist(a, b) / start.dist, viewer.minScale, viewer.maxScale);
+
+        const rect = st.getBoundingClientRect();
+        const localStartX = start.centerX - rect.left;
+        const localStartY = start.centerY - rect.top;
+        const imageX = (localStartX - start.baseX) / start.scale;
+        const imageY = (localStartY - start.baseY) / start.scale;
+
+        viewer.x = (c.x - rect.left) - imageX * viewer.scale;
+        viewer.y = (c.y - rect.top) - imageY * viewer.scale;
+        apply();
+        return;
+      }
+
+      if (e.touches.length === 1 && viewer.touchPan) {
+        const t = touchPoint(e.touches[0]);
+        viewer.x = viewer.touchPan.baseX + (t.clientX - viewer.touchPan.x);
+        viewer.y = viewer.touchPan.baseY + (t.clientY - viewer.touchPan.y);
+        apply();
+      }
+    }, { passive: false });
+
+    st.addEventListener("touchend", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.touches.length === 1) {
+        const t = touchPoint(e.touches[0]);
+        viewer.touchMode = "pan";
+        viewer.touchPan = { x: t.clientX, y: t.clientY, baseX: viewer.x, baseY: viewer.y };
+        viewer.touchPinch = null;
+      } else {
+        viewer.touchMode = "";
+        viewer.touchPan = null;
+        viewer.touchPinch = null;
+      }
+    }, { passive: false });
+
+    st.addEventListener("touchcancel", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      viewer.touchMode = "";
+      viewer.touchPan = null;
+      viewer.touchPinch = null;
+    }, { passive: false });
+  }
+
+  function bindViewer() {
+    const st = stage();
+    if (!st) return;
+
+    q("expCloseV37") && (q("expCloseV37").onclick = closeFull);
+    q("expFitV37") && (q("expFitV37").onclick = fit);
+    q("expZoomInV37") && (q("expZoomInV37").onclick = () => zoomAt(1.25));
+    q("expZoomOutV37") && (q("expZoomOutV37").onclick = () => zoomAt(0.8));
+
+    bindPointer(st);
+    bindTouch(st);
+
+    window.addEventListener("resize", () => {
+      const modal = q("expFullscreenV37");
+      if (modal && !modal.classList.contains("hidden")) setTimeout(fit, 120);
+    });
+  }
+
+  function renderExplanation() {
+    const box = q("explanationBox");
+    const p = currentProblem();
+    if (!box || !p) {
+      try { showToast("현재 문제가 없어"); } catch {}
+      return;
+    }
+
+    const src = expSrc();
+    const text = expText();
+    box.classList.remove("hidden");
+    box.innerHTML = "";
+
+    if (src) {
+      const openBtn = document.createElement("button");
+      openBtn.id = "expOpenFullscreenV37";
+      openBtn.type = "button";
+      openBtn.className = "secondary exp-open-btn-v37";
+      openBtn.textContent = "해설 전체화면으로 보기";
+      openBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openFull(src);
+      });
+      box.appendChild(openBtn);
+
+      const preview = document.createElement("img");
+      preview.className = "explanation-v37-img";
+      preview.alt = "해설 이미지";
+      preview.src = src;
+      preview.addEventListener("click", () => openFull(src));
+      box.appendChild(preview);
+
+      // 해설보기 누르면 바로 전체화면
+      setTimeout(() => openFull(src), 30);
+    }
+
+    if (text) {
+      const div = document.createElement("div");
+      div.className = "explanation-v37-text";
+      div.textContent = text;
+      box.appendChild(div);
+    }
+
+    if (!src && !text) {
+      box.innerHTML = '<p class="hint">등록된 해설이 없어.</p>';
+    }
+
+    bindViewer();
+  }
+
+  window.showExplanation = renderExplanation;
+  try { showExplanation = renderExplanation; } catch {}
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target?.closest?.("#showExpBtn");
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    renderExplanation();
+  }, true);
+
+  function bindButton() {
+    const btn = q("showExpBtn");
+    if (btn) {
+      btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        renderExplanation();
+      };
+    }
+    bindViewer();
+  }
+
+  [100, 500, 1200, 2500].forEach(ms => setTimeout(bindButton, ms));
+})();
