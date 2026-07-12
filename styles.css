@@ -1841,3 +1841,95 @@ body.reorder-active * {
   overflow: hidden !important;
   touch-action: none !important;
 }
+
+/* === v39 해설 전체화면 body portal === */
+html.psat-exp-v39-open,
+body.psat-exp-v39-open {
+  overflow: hidden !important;
+  touch-action: none !important;
+  overscroll-behavior: none !important;
+}
+#psatExpPortalV39 {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 2147483647 !important;
+  background: rgba(15,23,42,.985) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  touch-action: none !important;
+  overscroll-behavior: none !important;
+}
+#psatExpPortalV39.hidden {
+  display: none !important;
+}
+#psatExpToolbarV39 {
+  flex: 0 0 auto !important;
+  display: flex !important;
+  gap: 6px !important;
+  align-items: center !important;
+  padding: max(8px, env(safe-area-inset-top)) 8px 8px !important;
+  background: rgba(2,6,23,.97) !important;
+  border-bottom: 1px solid rgba(255,255,255,.18) !important;
+  overflow-x: auto !important;
+  white-space: nowrap !important;
+  touch-action: manipulation !important;
+}
+#psatExpToolbarV39 button {
+  border: 0 !important;
+  border-radius: 999px !important;
+  padding: 8px 12px !important;
+  background: #fff !important;
+  color: #111827 !important;
+  font-weight: 950 !important;
+  font-size: .86rem !important;
+}
+#psatExpZoomLabelV39 {
+  color: #fff !important;
+  font-weight: 950 !important;
+  font-size: .86rem !important;
+  padding: 0 4px !important;
+}
+#psatExpStageV39 {
+  flex: 1 1 auto !important;
+  position: relative !important;
+  overflow: hidden !important;
+  touch-action: none !important;
+  overscroll-behavior: none !important;
+  background: #111827 !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+#psatExpImgV39 {
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform-origin: 0 0 !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-user-drag: none !important;
+  will-change: transform !important;
+  background: #fff !important;
+  touch-action: none !important;
+  pointer-events: none !important;
+}
+.exp-open-btn-v39 {
+  width: 100% !important;
+  margin-top: 8px !important;
+  padding: 10px !important;
+  border-radius: 14px !important;
+  font-weight: 950 !important;
+}
+.explanation-v39-img {
+  max-width: 100% !important;
+  display: block !important;
+  border-radius: 12px !important;
+  background: #fff !important;
+  margin: 8px 0 !important;
+}
+.explanation-v39-text {
+  white-space: pre-wrap !important;
+  line-height: 1.6 !important;
+  margin-top: 8px !important;
+}

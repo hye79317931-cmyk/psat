@@ -5062,3 +5062,320 @@ setTimeout(() => {
 
   [100, 500, 1200, 2500].forEach(ms => setTimeout(bindButton, ms));
 })();
+
+
+/* === v39: 해설 전체화면을 문제풀이 오버레이 밖(body portal)으로 분리 === */
+(function psatExplanationBodyPortalV39(){
+  const view = {
+    scale: 1,
+    x: 0,
+    y: 0,
+    minScale: 0.1,
+    maxScale: 8,
+    touch: null
+  };
+
+  function q(id) { return document.getElementById(id); }
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+  function currentProblemV39() {
+    try { return state && state.current ? state.current : null; } catch { return null; }
+  }
+  function expSrcV39() { return currentProblemV39()?.explanationImageData || ""; }
+  function expTextV39() { return String(currentProblemV39()?.explanation || "").trim(); }
+
+  function ensurePortalV39() {
+    let portal = q("psatExpPortalV39");
+    if (portal) return portal;
+
+    portal = document.createElement("div");
+    portal.id = "psatExpPortalV39";
+    portal.className = "hidden";
+    portal.innerHTML = `
+      <div id="psatExpToolbarV39">
+        <button id="psatExpCloseV39" type="button">닫기</button>
+        <button id="psatExpZoomOutV39" type="button">축소</button>
+        <button id="psatExpFitV39" type="button">맞춤</button>
+        <button id="psatExpZoomInV39" type="button">확대</button>
+        <span id="psatExpZoomLabelV39">100%</span>
+      </div>
+      <div id="psatExpStageV39">
+        <img id="psatExpImgV39" alt="해설 전체화면 이미지" />
+      </div>
+    `;
+    document.body.appendChild(portal);
+    bindPortalV39();
+    return portal;
+  }
+
+  function stageV39() { return q("psatExpStageV39"); }
+  function imgV39() { return q("psatExpImgV39"); }
+  function isOpenV39() {
+    const portal = q("psatExpPortalV39");
+    return !!portal && !portal.classList.contains("hidden");
+  }
+
+  function updateLabelV39() {
+    const label = q("psatExpZoomLabelV39");
+    if (label) label.textContent = Math.round(view.scale * 100) + "%";
+  }
+
+  function applyV39() {
+    const img = imgV39();
+    if (!img) return;
+    img.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+    updateLabelV39();
+  }
+
+  function fitV39() {
+    const st = stageV39();
+    const img = imgV39();
+    if (!st || !img || !img.naturalWidth || !img.naturalHeight) return;
+    const sw = Math.max(1, st.clientWidth);
+    const sh = Math.max(1, st.clientHeight);
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    const s = Math.min(sw / iw, sh / ih);
+    view.minScale = Math.max(0.05, s * 0.4);
+    view.scale = Math.max(0.05, s);
+    view.x = (sw - iw * view.scale) / 2;
+    view.y = (sh - ih * view.scale) / 2;
+    applyV39();
+  }
+
+  function zoomAtV39(mult, clientX, clientY) {
+    const st = stageV39();
+    if (!st) return;
+    const rect = st.getBoundingClientRect();
+    const px = clientX == null ? rect.left + rect.width / 2 : clientX;
+    const py = clientY == null ? rect.top + rect.height / 2 : clientY;
+    const localX = px - rect.left;
+    const localY = py - rect.top;
+    const old = view.scale;
+    const next = clamp(old * mult, view.minScale, view.maxScale);
+    const imageX = (localX - view.x) / old;
+    const imageY = (localY - view.y) / old;
+    view.scale = next;
+    view.x = localX - imageX * next;
+    view.y = localY - imageY * next;
+    applyV39();
+  }
+
+  function openPortalV39(src) {
+    const portal = ensurePortalV39();
+    const img = imgV39();
+    if (!portal || !img || !src) {
+      try { showToast("해설 이미지가 없어"); } catch {}
+      return;
+    }
+    view.touch = null;
+    img.onload = () => setTimeout(fitV39, 30);
+    img.src = src;
+    portal.classList.remove("hidden");
+    document.documentElement.classList.add("psat-exp-v39-open");
+    document.body.classList.add("psat-exp-v39-open");
+
+    // 혹시 기존 풀스크린/문제 오버레이가 터치를 먹더라도 body 끝 portal이 최상단
+    document.body.appendChild(portal);
+
+    setTimeout(fitV39, 80);
+    setTimeout(fitV39, 300);
+  }
+
+  function closePortalV39() {
+    q("psatExpPortalV39")?.classList.add("hidden");
+    document.documentElement.classList.remove("psat-exp-v39-open");
+    document.body.classList.remove("psat-exp-v39-open");
+    view.touch = null;
+  }
+
+  function point(t) { return { x: t.clientX, y: t.clientY }; }
+  function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+  function mid(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+
+  function touchStartV39(e) {
+    if (!isOpenV39()) return;
+    if (e.target?.closest?.("#psatExpToolbarV39")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+
+    if (e.touches.length >= 2) {
+      const a = point(e.touches[0]);
+      const b = point(e.touches[1]);
+      const c = mid(a, b);
+      view.touch = {
+        mode: "pinch",
+        startDist: Math.max(1, dist(a, b)),
+        startScale: view.scale,
+        centerX: c.x,
+        centerY: c.y,
+        baseX: view.x,
+        baseY: view.y
+      };
+    } else if (e.touches.length === 1) {
+      const a = point(e.touches[0]);
+      view.touch = {
+        mode: "pan",
+        startX: a.x,
+        startY: a.y,
+        baseX: view.x,
+        baseY: view.y
+      };
+    }
+  }
+
+  function touchMoveV39(e) {
+    if (!isOpenV39()) return;
+    if (e.target?.closest?.("#psatExpToolbarV39")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+
+    const st = stageV39();
+    if (!st) return;
+
+    if (e.touches.length >= 2) {
+      if (!view.touch || view.touch.mode !== "pinch") {
+        touchStartV39(e);
+        return;
+      }
+      const a = point(e.touches[0]);
+      const b = point(e.touches[1]);
+      const c = mid(a, b);
+      const start = view.touch;
+      const rect = st.getBoundingClientRect();
+
+      view.scale = clamp(start.startScale * dist(a, b) / start.startDist, view.minScale, view.maxScale);
+
+      const startLocalX = start.centerX - rect.left;
+      const startLocalY = start.centerY - rect.top;
+      const imageX = (startLocalX - start.baseX) / start.startScale;
+      const imageY = (startLocalY - start.baseY) / start.startScale;
+
+      view.x = (c.x - rect.left) - imageX * view.scale;
+      view.y = (c.y - rect.top) - imageY * view.scale;
+      applyV39();
+      return;
+    }
+
+    if (e.touches.length === 1) {
+      if (!view.touch || view.touch.mode !== "pan") {
+        touchStartV39(e);
+        return;
+      }
+      const a = point(e.touches[0]);
+      view.x = view.touch.baseX + (a.x - view.touch.startX);
+      view.y = view.touch.baseY + (a.y - view.touch.startY);
+      applyV39();
+    }
+  }
+
+  function touchEndV39(e) {
+    if (!isOpenV39()) return;
+    if (e.target?.closest?.("#psatExpToolbarV39")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+
+    if (e.touches.length === 1) {
+      const a = point(e.touches[0]);
+      view.touch = { mode: "pan", startX: a.x, startY: a.y, baseX: view.x, baseY: view.y };
+    } else {
+      view.touch = null;
+    }
+  }
+
+  function bindPortalV39() {
+    q("psatExpCloseV39") && (q("psatExpCloseV39").onclick = closePortalV39);
+    q("psatExpFitV39") && (q("psatExpFitV39").onclick = fitV39);
+    q("psatExpZoomInV39") && (q("psatExpZoomInV39").onclick = () => zoomAtV39(1.25));
+    q("psatExpZoomOutV39") && (q("psatExpZoomOutV39").onclick = () => zoomAtV39(0.8));
+
+    if (!document.documentElement.dataset.psatExpV39TouchReady) {
+      document.documentElement.dataset.psatExpV39TouchReady = "1";
+      document.addEventListener("touchstart", touchStartV39, { capture: true, passive: false });
+      document.addEventListener("touchmove", touchMoveV39, { capture: true, passive: false });
+      document.addEventListener("touchend", touchEndV39, { capture: true, passive: false });
+      document.addEventListener("touchcancel", touchEndV39, { capture: true, passive: false });
+      window.addEventListener("resize", () => {
+        if (isOpenV39()) setTimeout(fitV39, 120);
+      });
+    }
+  }
+
+  function renderExplanationV39() {
+    const box = q("explanationBox");
+    const p = currentProblemV39();
+    if (!box || !p) {
+      try { showToast("현재 문제가 없어"); } catch {}
+      return;
+    }
+
+    const src = expSrcV39();
+    const text = expTextV39();
+    box.classList.remove("hidden");
+    box.innerHTML = "";
+
+    if (src) {
+      const btn = document.createElement("button");
+      btn.id = "expOpenFullscreenV39";
+      btn.type = "button";
+      btn.className = "secondary exp-open-btn-v39";
+      btn.textContent = "해설 전체화면으로 보기";
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openPortalV39(src);
+      });
+      box.appendChild(btn);
+
+      const img = document.createElement("img");
+      img.className = "explanation-v39-img";
+      img.alt = "해설 이미지";
+      img.src = src;
+      img.addEventListener("click", () => openPortalV39(src));
+      box.appendChild(img);
+
+      // 해설보기 버튼 누른 직후 바로 body portal로 열기
+      setTimeout(() => openPortalV39(src), 30);
+    }
+
+    if (text) {
+      const div = document.createElement("div");
+      div.className = "explanation-v39-text";
+      div.textContent = text;
+      box.appendChild(div);
+    }
+
+    if (!src && !text) box.innerHTML = '<p class="hint">등록된 해설이 없어.</p>';
+    ensurePortalV39();
+  }
+
+  // 기존 해설보기 이벤트보다 먼저 실행해서 예전 오버레이 이벤트 차단
+  document.addEventListener("click", (e) => {
+    const btn = e.target?.closest?.("#showExpBtn, #expOpenFullscreenV39");
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    if (btn.id === "expOpenFullscreenV39") openPortalV39(expSrcV39());
+    else renderExplanationV39();
+  }, true);
+
+  try {
+    window.showExplanation = renderExplanationV39;
+    showExplanation = renderExplanationV39;
+  } catch {}
+
+  [100, 500, 1200, 2500].forEach(ms => setTimeout(() => {
+    const btn = q("showExpBtn");
+    if (btn) {
+      btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        renderExplanationV39();
+      };
+    }
+    ensurePortalV39();
+  }, ms));
+})();

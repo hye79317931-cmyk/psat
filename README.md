@@ -85,3 +85,10 @@
 - 확대/축소/맞춤 버튼 유지
 - deploy-version.txt 갱신
 - 생성시각: 2026-07-09T09:24:01.573862
+
+
+## v39 body portal explanation
+- 해설 전체화면을 문제풀이 오버레이 내부가 아니라 document.body 최상단 portal로 생성
+- 중단/나가기 전에도 해설 전체화면 터치 확대가 되도록 분리
+- document capture touchstart/touchmove 직접 처리
+- 생성시각: 2026-07-09T10:57:41.679971
