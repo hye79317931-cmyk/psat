@@ -1,8 +1,8 @@
 {
   "name": "PSAT 랜덤 오답노트",
   "short_name": "PSAT노트",
-  "description": "PSAT PWA v39",
-  "start_url": "./?v=39",
+  "description": "PSAT PWA v40",
+  "start_url": "./?v=40",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",

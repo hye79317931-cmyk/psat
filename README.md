@@ -56,39 +56,9 @@
 - 해당 대분류 저장값이 없으면 전체 마지막 중간분류로 보정
 
 
-## v33 explanation fullscreen fix
-- 해설보기 전체화면 버튼 복구
-- 기존 showExplanation 함수 오류가 나도 해설 이미지/텍스트가 최소 표시되도록 보정
-- 전체화면 해설 이미지에서 손가락 드래그 이동, 두 손가락 확대/축소 지원
-- 닫기/확대/축소/맞춤 버튼 추가
-- v32 중간분류 기능 유지
-
-
-## v34 explanation modal insertion fix
-- v33에서 전체화면 모달 HTML 삽입이 누락될 수 있던 문제 수정
-- 해설 전체화면 보기 버튼/모달을 확실히 포함
-
-
-## v36 explanation zoom deploy fix
-- 해설보기 버튼의 기존 이벤트를 캡처 단계에서 차단
-- 해설보기 클릭 시 해설 전체화면을 바로 열도록 수정
-- 전체화면에서 한 손가락 이동, 두 손가락 확대/축소
-- 확대/축소/맞춤/닫기 버튼 포함
-- GitHub Pages 배포 트리거용 deploy-version.txt 추가
-- 생성시각: 2026-07-09T08:56:50.146660
-
-
-## v37 touch pinch fix
-- v36의 pointer 기반 확대가 일부 Android Chrome/PWA에서 안 먹는 문제 보정
-- 해설 전체화면에 raw touchstart/touchmove 직접 처리 추가
-- 손가락 1개 이동, 손가락 2개 확대/축소를 touch 좌표로 계산
-- 확대/축소/맞춤 버튼 유지
-- deploy-version.txt 갱신
-- 생성시각: 2026-07-09T09:24:01.573862
-
-
-## v39 body portal explanation
-- 해설 전체화면을 문제풀이 오버레이 내부가 아니라 document.body 최상단 portal로 생성
-- 중단/나가기 전에도 해설 전체화면 터치 확대가 되도록 분리
-- document capture touchstart/touchmove 직접 처리
-- 생성시각: 2026-07-09T10:57:41.679971
+## v40 fullscreen host explanation
+- v32 중간분류 버전을 기준으로 새로 제작
+- 해설 전체화면 portal을 document.fullscreenElement 내부에 생성
+- 중단/나가기 전에도 터치 확대/축소 가능하도록 수정
+- touch + pointer 이벤트 모두 처리
+- 생성시각: 2026-07-12T09:09:22.826160

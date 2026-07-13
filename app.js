@@ -4186,1023 +4186,170 @@ setTimeout(() => {
 })();
 
 
-/* === v33: 해설보기 전체화면 복구/충돌 방지 === */
-(function explanationFullscreenFixV33(){
-  const viewer = {
-    src: "",
-    scale: 1,
-    x: 0,
-    y: 0,
-    minScale: 0.2,
-    maxScale: 6,
-    pointerMap: new Map(),
-    panStart: null,
-    pinchStart: null
-  };
-
-  function q(id) { return document.getElementById(id); }
-  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-  function imgEl() { return q("expImgV33"); }
-  function stageEl() { return q("expStageV33"); }
-  function modalEl() { return q("expFullscreenV33"); }
-
-  function updateLabel() {
-    const label = q("expZoomLabelV33");
-    if (label) label.textContent = Math.round(viewer.scale * 100) + "%";
-  }
-  function applyTransform() {
-    const img = imgEl();
-    if (!img) return;
-    img.style.transform = `translate(${viewer.x}px, ${viewer.y}px) scale(${viewer.scale})`;
-    updateLabel();
-  }
-  function fitViewer() {
-    const stage = stageEl();
-    const img = imgEl();
-    if (!stage || !img || !img.naturalWidth || !img.naturalHeight) return;
-    const sw = Math.max(1, stage.clientWidth);
-    const sh = Math.max(1, stage.clientHeight);
-    const iw = img.naturalWidth;
-    const ih = img.naturalHeight;
-    const scale = Math.min(sw / iw, sh / ih);
-    viewer.minScale = Math.max(0.05, scale * 0.45);
-    viewer.scale = Math.max(0.05, scale);
-    viewer.x = (sw - iw * viewer.scale) / 2;
-    viewer.y = (sh - ih * viewer.scale) / 2;
-    applyTransform();
-  }
-  function zoomAt(delta, cx, cy) {
-    const stage = stageEl();
-    if (!stage) return;
-    const rect = stage.getBoundingClientRect();
-    const px = cx == null ? rect.left + rect.width / 2 : cx;
-    const py = cy == null ? rect.top + rect.height / 2 : cy;
-    const old = viewer.scale;
-    const next = clamp(old * delta, viewer.minScale, viewer.maxScale);
-    const localX = px - rect.left;
-    const localY = py - rect.top;
-    const imageX = (localX - viewer.x) / old;
-    const imageY = (localY - viewer.y) / old;
-    viewer.scale = next;
-    viewer.x = localX - imageX * next;
-    viewer.y = localY - imageY * next;
-    applyTransform();
-  }
-  function openViewer(src) {
-    const modal = modalEl();
-    const img = imgEl();
-    if (!modal || !img || !src) return;
-    viewer.src = src;
-    viewer.pointerMap.clear();
-    viewer.panStart = null;
-    viewer.pinchStart = null;
-    img.onload = () => setTimeout(fitViewer, 30);
-    img.src = src;
-    modal.classList.remove("hidden");
-    document.documentElement.classList.add("exp-fullscreen-open-v33");
-    document.body.classList.add("exp-fullscreen-open-v33");
-    setTimeout(fitViewer, 80);
-    setTimeout(fitViewer, 300);
-  }
-  function closeViewer() {
-    const modal = modalEl();
-    if (modal) modal.classList.add("hidden");
-    document.documentElement.classList.remove("exp-fullscreen-open-v33");
-    document.body.classList.remove("exp-fullscreen-open-v33");
-    viewer.pointerMap.clear();
-    viewer.panStart = null;
-    viewer.pinchStart = null;
-  }
-  function distance(a, b) {
-    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-  }
-  function center(a, b) {
-    return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
-  }
-  function bindViewer() {
-    const modal = modalEl();
-    const stage = stageEl();
-    const close = q("expCloseV33");
-    const fit = q("expFitV33");
-    const zin = q("expZoomInV33");
-    const zout = q("expZoomOutV33");
-    if (!modal || !stage || stage.dataset.v33Ready) return;
-    stage.dataset.v33Ready = "1";
-
-    close && (close.onclick = closeViewer);
-    fit && (fit.onclick = fitViewer);
-    zin && (zin.onclick = () => zoomAt(1.25));
-    zout && (zout.onclick = () => zoomAt(0.8));
-
-    stage.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      stage.setPointerCapture?.(event.pointerId);
-      viewer.pointerMap.set(event.pointerId, event);
-
-      if (viewer.pointerMap.size === 1) {
-        viewer.panStart = { x: event.clientX, y: event.clientY, baseX: viewer.x, baseY: viewer.y };
-        viewer.pinchStart = null;
-      } else if (viewer.pointerMap.size >= 2) {
-        const pts = [...viewer.pointerMap.values()].slice(0, 2);
-        const c = center(pts[0], pts[1]);
-        viewer.pinchStart = {
-          dist: distance(pts[0], pts[1]),
-          scale: viewer.scale,
-          centerX: c.x,
-          centerY: c.y,
-          baseX: viewer.x,
-          baseY: viewer.y
-        };
-      }
-    }, { passive: false });
-
-    stage.addEventListener("pointermove", (event) => {
-      if (!viewer.pointerMap.has(event.pointerId)) return;
-      event.preventDefault();
-      viewer.pointerMap.set(event.pointerId, event);
-
-      if (viewer.pointerMap.size >= 2 && viewer.pinchStart) {
-        const pts = [...viewer.pointerMap.values()].slice(0, 2);
-        const c = center(pts[0], pts[1]);
-        const start = viewer.pinchStart;
-        const ratio = distance(pts[0], pts[1]) / Math.max(1, start.dist);
-        viewer.scale = clamp(start.scale * ratio, viewer.minScale, viewer.maxScale);
-        const stageRect = stage.getBoundingClientRect();
-        const localX = start.centerX - stageRect.left;
-        const localY = start.centerY - stageRect.top;
-        const imageX = (localX - start.baseX) / start.scale;
-        const imageY = (localY - start.baseY) / start.scale;
-        viewer.x = (c.x - stageRect.left) - imageX * viewer.scale;
-        viewer.y = (c.y - stageRect.top) - imageY * viewer.scale;
-        applyTransform();
-        return;
-      }
-
-      if (viewer.pointerMap.size === 1 && viewer.panStart) {
-        viewer.x = viewer.panStart.baseX + (event.clientX - viewer.panStart.x);
-        viewer.y = viewer.panStart.baseY + (event.clientY - viewer.panStart.y);
-        applyTransform();
-      }
-    }, { passive: false });
-
-    const end = (event) => {
-      viewer.pointerMap.delete(event.pointerId);
-      if (viewer.pointerMap.size === 1) {
-        const remaining = [...viewer.pointerMap.values()][0];
-        viewer.panStart = { x: remaining.clientX, y: remaining.clientY, baseX: viewer.x, baseY: viewer.y };
-        viewer.pinchStart = null;
-      } else {
-        viewer.panStart = null;
-        viewer.pinchStart = null;
-      }
-    };
-    stage.addEventListener("pointerup", end);
-    stage.addEventListener("pointercancel", end);
-    stage.addEventListener("lostpointercapture", end);
-
-    window.addEventListener("resize", () => {
-      if (!modal.classList.contains("hidden")) setTimeout(fitViewer, 120);
-    });
-  }
-
-  function getCurrentExplanationSrc() {
-    const direct = document.querySelector("#explanationBox img, #explanationBox .exp-image, #explanationBox .explanation-image");
-    if (direct?.src) return direct.src;
-    const p = state?.current;
-    return p?.explanationImageData || "";
-  }
-
-  function addOpenButton() {
-    const box = q("explanationBox");
-    if (!box) return;
-    let btn = q("expOpenFullscreenV33");
-    if (!btn) {
-      btn = document.createElement("button");
-      btn.id = "expOpenFullscreenV33";
-      btn.type = "button";
-      btn.className = "secondary exp-open-btn-v33";
-      btn.textContent = "해설 전체화면으로 보기";
-      btn.onclick = () => {
-        const src = getCurrentExplanationSrc();
-        if (!src) {
-          try { showToast("해설 이미지가 없어"); } catch {}
-          return;
-        }
-        openViewer(src);
-      };
-    }
-    if (!box.contains(btn)) box.appendChild(btn);
-  }
-
-  const oldShowExplanation = typeof showExplanation === "function" ? showExplanation : null;
-  showExplanation = function(...args) {
-    try {
-      if (oldShowExplanation) oldShowExplanation.apply(this, args);
-    } catch (err) {
-      console.error("old showExplanation failed", err);
-    }
-
-    const box = q("explanationBox");
-    const p = state?.current;
-    if (box) {
-      box.classList.remove("hidden");
-      const hasImg = !!p?.explanationImageData;
-      const text = String(p?.explanation || "").trim();
-
-      if (!box.querySelector("img") && hasImg) {
-        const img = document.createElement("img");
-        img.src = p.explanationImageData;
-        img.alt = "해설 이미지";
-        img.style.maxWidth = "100%";
-        img.style.display = "block";
-        img.style.borderRadius = "12px";
-        img.style.background = "#fff";
-        box.prepend(img);
-      }
-      if (!box.textContent.trim() && text) {
-        const div = document.createElement("div");
-        div.textContent = text;
-        box.appendChild(div);
-      }
-      addOpenButton();
-    }
-
-    bindViewer();
-  };
-
-  setTimeout(bindViewer, 500);
-})();
-
-
-/* === v36: 해설보기 버튼/확대/전체화면 최종 교체 === */
-(function explanationZoomDeployFixV36(){
-  const viewer = {
-    scale: 1,
-    x: 0,
-    y: 0,
-    minScale: 0.1,
-    maxScale: 7,
-    points: new Map(),
-    pan: null,
-    pinch: null
-  };
-
-  function $(id) { return document.getElementById(id); }
-  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-  function problem() { return window.state?.current || (typeof state !== "undefined" ? state.current : null); }
-  function expSrc() { return problem()?.explanationImageData || ""; }
-  function expText() { return String(problem()?.explanation || "").trim(); }
-
-  function updateLabel() {
-    const label = $("expZoomLabelV36");
-    if (label) label.textContent = Math.round(viewer.scale * 100) + "%";
-  }
-
-  function applyTransform() {
-    const img = $("expImgV36");
-    if (!img) return;
-    img.style.transform = `translate(${viewer.x}px, ${viewer.y}px) scale(${viewer.scale})`;
-    updateLabel();
-  }
-
-  function fit() {
-    const stage = $("expStageV36");
-    const img = $("expImgV36");
-    if (!stage || !img || !img.naturalWidth || !img.naturalHeight) return;
-    const sw = Math.max(1, stage.clientWidth);
-    const sh = Math.max(1, stage.clientHeight);
-    const iw = img.naturalWidth;
-    const ih = img.naturalHeight;
-    const scale = Math.min(sw / iw, sh / ih);
-    viewer.minScale = Math.max(0.05, scale * 0.45);
-    viewer.scale = Math.max(0.05, scale);
-    viewer.x = (sw - iw * viewer.scale) / 2;
-    viewer.y = (sh - ih * viewer.scale) / 2;
-    applyTransform();
-  }
-
-  function zoom(mult, cx, cy) {
-    const stage = $("expStageV36");
-    if (!stage) return;
-    const rect = stage.getBoundingClientRect();
-    const px = cx == null ? rect.left + rect.width / 2 : cx;
-    const py = cy == null ? rect.top + rect.height / 2 : cy;
-    const localX = px - rect.left;
-    const localY = py - rect.top;
-    const oldScale = viewer.scale;
-    const next = clamp(oldScale * mult, viewer.minScale, viewer.maxScale);
-    const imageX = (localX - viewer.x) / oldScale;
-    const imageY = (localY - viewer.y) / oldScale;
-    viewer.scale = next;
-    viewer.x = localX - imageX * next;
-    viewer.y = localY - imageY * next;
-    applyTransform();
-  }
-
-  function openFull(src) {
-    const modal = $("expFullscreenV36");
-    const img = $("expImgV36");
-    if (!modal || !img || !src) {
-      try { showToast("해설 이미지가 없어"); } catch {}
-      return;
-    }
-    viewer.points.clear();
-    viewer.pan = null;
-    viewer.pinch = null;
-    img.onload = () => setTimeout(fit, 30);
-    img.src = src;
-    modal.classList.remove("hidden");
-    document.documentElement.classList.add("exp-fullscreen-open-v36");
-    document.body.classList.add("exp-fullscreen-open-v36");
-    setTimeout(fit, 80);
-    setTimeout(fit, 300);
-  }
-
-  function closeFull() {
-    $("expFullscreenV36")?.classList.add("hidden");
-    document.documentElement.classList.remove("exp-fullscreen-open-v36");
-    document.body.classList.remove("exp-fullscreen-open-v36");
-    viewer.points.clear();
-    viewer.pan = null;
-    viewer.pinch = null;
-  }
-
-  function dist(a,b) { return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
-  function mid(a,b) { return { x:(a.clientX+b.clientX)/2, y:(a.clientY+b.clientY)/2 }; }
-
-  function bindFullViewer() {
-    const stage = $("expStageV36");
-    if (!stage || stage.dataset.v36Ready) return;
-    stage.dataset.v36Ready = "1";
-
-    $("expCloseV36") && ($("expCloseV36").onclick = closeFull);
-    $("expFitV36") && ($("expFitV36").onclick = fit);
-    $("expZoomInV36") && ($("expZoomInV36").onclick = () => zoom(1.25));
-    $("expZoomOutV36") && ($("expZoomOutV36").onclick = () => zoom(0.8));
-
-    stage.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      stage.setPointerCapture?.(event.pointerId);
-      viewer.points.set(event.pointerId, event);
-
-      if (viewer.points.size === 1) {
-        viewer.pan = { x:event.clientX, y:event.clientY, baseX:viewer.x, baseY:viewer.y };
-        viewer.pinch = null;
-      } else {
-        const pts = [...viewer.points.values()].slice(0,2);
-        const c = mid(pts[0], pts[1]);
-        viewer.pinch = {
-          dist: Math.max(1, dist(pts[0], pts[1])),
-          scale: viewer.scale,
-          centerX: c.x,
-          centerY: c.y,
-          baseX: viewer.x,
-          baseY: viewer.y
-        };
-      }
-    }, { passive:false });
-
-    stage.addEventListener("pointermove", (event) => {
-      if (!viewer.points.has(event.pointerId)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      viewer.points.set(event.pointerId, event);
-
-      if (viewer.points.size >= 2 && viewer.pinch) {
-        const pts = [...viewer.points.values()].slice(0,2);
-        const c = mid(pts[0], pts[1]);
-        const start = viewer.pinch;
-        viewer.scale = clamp(start.scale * dist(pts[0], pts[1]) / start.dist, viewer.minScale, viewer.maxScale);
-        const rect = stage.getBoundingClientRect();
-        const localStartX = start.centerX - rect.left;
-        const localStartY = start.centerY - rect.top;
-        const imageX = (localStartX - start.baseX) / start.scale;
-        const imageY = (localStartY - start.baseY) / start.scale;
-        viewer.x = (c.x - rect.left) - imageX * viewer.scale;
-        viewer.y = (c.y - rect.top) - imageY * viewer.scale;
-        applyTransform();
-        return;
-      }
-
-      if (viewer.points.size === 1 && viewer.pan) {
-        viewer.x = viewer.pan.baseX + (event.clientX - viewer.pan.x);
-        viewer.y = viewer.pan.baseY + (event.clientY - viewer.pan.y);
-        applyTransform();
-      }
-    }, { passive:false });
-
-    const end = (event) => {
-      viewer.points.delete(event.pointerId);
-      if (viewer.points.size === 1) {
-        const p = [...viewer.points.values()][0];
-        viewer.pan = { x:p.clientX, y:p.clientY, baseX:viewer.x, baseY:viewer.y };
-        viewer.pinch = null;
-      } else {
-        viewer.pan = null;
-        viewer.pinch = null;
-      }
-    };
-    stage.addEventListener("pointerup", end);
-    stage.addEventListener("pointercancel", end);
-    stage.addEventListener("lostpointercapture", end);
-    window.addEventListener("resize", () => {
-      const modal = $("expFullscreenV36");
-      if (modal && !modal.classList.contains("hidden")) setTimeout(fit, 120);
-    });
-  }
-
-  function renderExplanation() {
-    const box = $("explanationBox");
-    const p = problem();
-    if (!box || !p) {
-      try { showToast("현재 문제가 없어"); } catch {}
-      return;
-    }
-
-    const src = expSrc();
-    const text = expText();
-    box.classList.remove("hidden");
-    box.innerHTML = "";
-
-    if (src) {
-      const openBtn = document.createElement("button");
-      openBtn.id = "expOpenFullscreenV36";
-      openBtn.type = "button";
-      openBtn.className = "secondary exp-open-btn-v36";
-      openBtn.textContent = "해설 전체화면으로 보기";
-      openBtn.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        openFull(src);
-      });
-      box.appendChild(openBtn);
-
-      const img = document.createElement("img");
-      img.className = "explanation-v36-img";
-      img.alt = "해설 이미지";
-      img.src = src;
-      img.addEventListener("click", () => openFull(src));
-      box.appendChild(img);
-
-      // 사용자 요청 기준: 해설보기 누르면 바로 전체화면으로 열리게 함
-      setTimeout(() => openFull(src), 30);
-    }
-
-    if (text) {
-      const div = document.createElement("div");
-      div.className = "explanation-v36-text";
-      div.textContent = text;
-      box.appendChild(div);
-    }
-
-    if (!src && !text) {
-      box.innerHTML = '<p class="hint">등록된 해설이 없어.</p>';
-    }
-
-    bindFullViewer();
-  }
-
-  // 기존 showExplanation 함수 자체 교체
-  window.showExplanation = renderExplanation;
-  try { showExplanation = renderExplanation; } catch {}
-
-  // 핵심: 예전 해설보기 이벤트가 실행되기 전에 캡처 단계에서 차단
-  document.addEventListener("click", (event) => {
-    const btn = event.target?.closest?.("#showExpBtn");
-    if (!btn) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-    renderExplanation();
-  }, true);
-
-  function bindButton() {
-    const btn = $("showExpBtn");
-    if (btn) {
-      btn.onclick = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        renderExplanation();
-      };
-    }
-    bindFullViewer();
-  }
-
-  [100, 500, 1200, 2500].forEach(ms => setTimeout(bindButton, ms));
-})();
-
-
-/* === v37: 해설 확대 touch events 직접 계산 === */
-(function explanationTouchPinchFixV37(){
-  const viewer = {
-    scale: 1,
-    x: 0,
-    y: 0,
-    minScale: 0.1,
-    maxScale: 8,
-    activePointers: new Map(),
-    pointerPan: null,
-    pointerPinch: null,
-    touchMode: "",
-    touchPan: null,
-    touchPinch: null
-  };
-
-  function q(id) { return document.getElementById(id); }
-  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-  function currentProblem() {
-    try { return state?.current || null; } catch { return null; }
-  }
-  function expSrc() { return currentProblem()?.explanationImageData || ""; }
-  function expText() { return String(currentProblem()?.explanation || "").trim(); }
-  function stage() { return q("expStageV37"); }
-  function img() { return q("expImgV37"); }
-
-  function label() {
-    const l = q("expZoomLabelV37");
-    if (l) l.textContent = Math.round(viewer.scale * 100) + "%";
-  }
-  function apply() {
-    const image = img();
-    if (!image) return;
-    image.style.transform = `translate(${viewer.x}px, ${viewer.y}px) scale(${viewer.scale})`;
-    label();
-  }
-  function fit() {
-    const st = stage();
-    const image = img();
-    if (!st || !image || !image.naturalWidth || !image.naturalHeight) return;
-    const sw = Math.max(1, st.clientWidth);
-    const sh = Math.max(1, st.clientHeight);
-    const iw = image.naturalWidth;
-    const ih = image.naturalHeight;
-    const s = Math.min(sw / iw, sh / ih);
-    viewer.minScale = Math.max(0.05, s * 0.4);
-    viewer.scale = Math.max(0.05, s);
-    viewer.x = (sw - iw * viewer.scale) / 2;
-    viewer.y = (sh - ih * viewer.scale) / 2;
-    apply();
-  }
-  function zoomAt(mult, clientX, clientY) {
-    const st = stage();
-    if (!st) return;
-    const rect = st.getBoundingClientRect();
-    const px = clientX == null ? rect.left + rect.width / 2 : clientX;
-    const py = clientY == null ? rect.top + rect.height / 2 : clientY;
-    const localX = px - rect.left;
-    const localY = py - rect.top;
-    const old = viewer.scale;
-    const next = clamp(old * mult, viewer.minScale, viewer.maxScale);
-    const imageX = (localX - viewer.x) / old;
-    const imageY = (localY - viewer.y) / old;
-    viewer.scale = next;
-    viewer.x = localX - imageX * next;
-    viewer.y = localY - imageY * next;
-    apply();
-  }
-  function closeFull() {
-    q("expFullscreenV37")?.classList.add("hidden");
-    document.documentElement.classList.remove("exp-fullscreen-open-v37");
-    document.body.classList.remove("exp-fullscreen-open-v37");
-    viewer.activePointers.clear();
-    viewer.pointerPan = null;
-    viewer.pointerPinch = null;
-    viewer.touchMode = "";
-    viewer.touchPan = null;
-    viewer.touchPinch = null;
-  }
-  function openFull(src) {
-    const modal = q("expFullscreenV37");
-    const image = img();
-    if (!modal || !image || !src) {
-      try { showToast("해설 이미지가 없어"); } catch {}
-      return;
-    }
-    viewer.activePointers.clear();
-    viewer.pointerPan = null;
-    viewer.pointerPinch = null;
-    viewer.touchMode = "";
-    viewer.touchPan = null;
-    viewer.touchPinch = null;
-    image.onload = () => setTimeout(fit, 30);
-    image.src = src;
-    modal.classList.remove("hidden");
-    document.documentElement.classList.add("exp-fullscreen-open-v37");
-    document.body.classList.add("exp-fullscreen-open-v37");
-    setTimeout(fit, 80);
-    setTimeout(fit, 300);
-  }
-
-  function dist(a, b) {
-    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-  }
-  function mid(a, b) {
-    return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
-  }
-
-  // Pointer fallback
-  function bindPointer(st) {
-    if (st.dataset.v37PointerReady) return;
-    st.dataset.v37PointerReady = "1";
-
-    st.addEventListener("pointerdown", (e) => {
-      if (e.pointerType === "mouse") return;
-      e.preventDefault();
-      e.stopPropagation();
-      st.setPointerCapture?.(e.pointerId);
-      viewer.activePointers.set(e.pointerId, e);
-
-      if (viewer.activePointers.size === 1) {
-        viewer.pointerPan = { x: e.clientX, y: e.clientY, baseX: viewer.x, baseY: viewer.y };
-        viewer.pointerPinch = null;
-      } else if (viewer.activePointers.size >= 2) {
-        const pts = [...viewer.activePointers.values()].slice(0, 2);
-        const c = mid(pts[0], pts[1]);
-        viewer.pointerPinch = {
-          dist: Math.max(1, dist(pts[0], pts[1])),
-          scale: viewer.scale,
-          centerX: c.x,
-          centerY: c.y,
-          baseX: viewer.x,
-          baseY: viewer.y
-        };
-      }
-    }, { passive: false });
-
-    st.addEventListener("pointermove", (e) => {
-      if (!viewer.activePointers.has(e.pointerId)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      viewer.activePointers.set(e.pointerId, e);
-
-      if (viewer.activePointers.size >= 2 && viewer.pointerPinch) {
-        const pts = [...viewer.activePointers.values()].slice(0, 2);
-        const c = mid(pts[0], pts[1]);
-        const start = viewer.pointerPinch;
-        viewer.scale = clamp(start.scale * dist(pts[0], pts[1]) / start.dist, viewer.minScale, viewer.maxScale);
-
-        const rect = st.getBoundingClientRect();
-        const localStartX = start.centerX - rect.left;
-        const localStartY = start.centerY - rect.top;
-        const imageX = (localStartX - start.baseX) / start.scale;
-        const imageY = (localStartY - start.baseY) / start.scale;
-        viewer.x = (c.x - rect.left) - imageX * viewer.scale;
-        viewer.y = (c.y - rect.top) - imageY * viewer.scale;
-        apply();
-        return;
-      }
-
-      if (viewer.activePointers.size === 1 && viewer.pointerPan) {
-        viewer.x = viewer.pointerPan.baseX + (e.clientX - viewer.pointerPan.x);
-        viewer.y = viewer.pointerPan.baseY + (e.clientY - viewer.pointerPan.y);
-        apply();
-      }
-    }, { passive: false });
-
-    const end = (e) => {
-      viewer.activePointers.delete(e.pointerId);
-      if (viewer.activePointers.size === 1) {
-        const p = [...viewer.activePointers.values()][0];
-        viewer.pointerPan = { x: p.clientX, y: p.clientY, baseX: viewer.x, baseY: viewer.y };
-        viewer.pointerPinch = null;
-      } else {
-        viewer.pointerPan = null;
-        viewer.pointerPinch = null;
-      }
-    };
-    st.addEventListener("pointerup", end);
-    st.addEventListener("pointercancel", end);
-    st.addEventListener("lostpointercapture", end);
-  }
-
-  // 핵심: Android Chrome용 raw touch handler
-  function touchPoint(t) {
-    return { clientX: t.clientX, clientY: t.clientY };
-  }
-  function bindTouch(st) {
-    if (st.dataset.v37TouchReady) return;
-    st.dataset.v37TouchReady = "1";
-
-    st.addEventListener("touchstart", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (e.touches.length === 1) {
-        const t = touchPoint(e.touches[0]);
-        viewer.touchMode = "pan";
-        viewer.touchPan = { x: t.clientX, y: t.clientY, baseX: viewer.x, baseY: viewer.y };
-        viewer.touchPinch = null;
-      } else if (e.touches.length >= 2) {
-        const a = touchPoint(e.touches[0]);
-        const b = touchPoint(e.touches[1]);
-        const c = mid(a, b);
-        viewer.touchMode = "pinch";
-        viewer.touchPinch = {
-          dist: Math.max(1, dist(a, b)),
-          scale: viewer.scale,
-          centerX: c.x,
-          centerY: c.y,
-          baseX: viewer.x,
-          baseY: viewer.y
-        };
-        viewer.touchPan = null;
-      }
-    }, { passive: false });
-
-    st.addEventListener("touchmove", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (e.touches.length >= 2 && viewer.touchPinch) {
-        const a = touchPoint(e.touches[0]);
-        const b = touchPoint(e.touches[1]);
-        const c = mid(a, b);
-        const start = viewer.touchPinch;
-
-        viewer.scale = clamp(start.scale * dist(a, b) / start.dist, viewer.minScale, viewer.maxScale);
-
-        const rect = st.getBoundingClientRect();
-        const localStartX = start.centerX - rect.left;
-        const localStartY = start.centerY - rect.top;
-        const imageX = (localStartX - start.baseX) / start.scale;
-        const imageY = (localStartY - start.baseY) / start.scale;
-
-        viewer.x = (c.x - rect.left) - imageX * viewer.scale;
-        viewer.y = (c.y - rect.top) - imageY * viewer.scale;
-        apply();
-        return;
-      }
-
-      if (e.touches.length === 1 && viewer.touchPan) {
-        const t = touchPoint(e.touches[0]);
-        viewer.x = viewer.touchPan.baseX + (t.clientX - viewer.touchPan.x);
-        viewer.y = viewer.touchPan.baseY + (t.clientY - viewer.touchPan.y);
-        apply();
-      }
-    }, { passive: false });
-
-    st.addEventListener("touchend", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (e.touches.length === 1) {
-        const t = touchPoint(e.touches[0]);
-        viewer.touchMode = "pan";
-        viewer.touchPan = { x: t.clientX, y: t.clientY, baseX: viewer.x, baseY: viewer.y };
-        viewer.touchPinch = null;
-      } else {
-        viewer.touchMode = "";
-        viewer.touchPan = null;
-        viewer.touchPinch = null;
-      }
-    }, { passive: false });
-
-    st.addEventListener("touchcancel", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      viewer.touchMode = "";
-      viewer.touchPan = null;
-      viewer.touchPinch = null;
-    }, { passive: false });
-  }
-
-  function bindViewer() {
-    const st = stage();
-    if (!st) return;
-
-    q("expCloseV37") && (q("expCloseV37").onclick = closeFull);
-    q("expFitV37") && (q("expFitV37").onclick = fit);
-    q("expZoomInV37") && (q("expZoomInV37").onclick = () => zoomAt(1.25));
-    q("expZoomOutV37") && (q("expZoomOutV37").onclick = () => zoomAt(0.8));
-
-    bindPointer(st);
-    bindTouch(st);
-
-    window.addEventListener("resize", () => {
-      const modal = q("expFullscreenV37");
-      if (modal && !modal.classList.contains("hidden")) setTimeout(fit, 120);
-    });
-  }
-
-  function renderExplanation() {
-    const box = q("explanationBox");
-    const p = currentProblem();
-    if (!box || !p) {
-      try { showToast("현재 문제가 없어"); } catch {}
-      return;
-    }
-
-    const src = expSrc();
-    const text = expText();
-    box.classList.remove("hidden");
-    box.innerHTML = "";
-
-    if (src) {
-      const openBtn = document.createElement("button");
-      openBtn.id = "expOpenFullscreenV37";
-      openBtn.type = "button";
-      openBtn.className = "secondary exp-open-btn-v37";
-      openBtn.textContent = "해설 전체화면으로 보기";
-      openBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openFull(src);
-      });
-      box.appendChild(openBtn);
-
-      const preview = document.createElement("img");
-      preview.className = "explanation-v37-img";
-      preview.alt = "해설 이미지";
-      preview.src = src;
-      preview.addEventListener("click", () => openFull(src));
-      box.appendChild(preview);
-
-      // 해설보기 누르면 바로 전체화면
-      setTimeout(() => openFull(src), 30);
-    }
-
-    if (text) {
-      const div = document.createElement("div");
-      div.className = "explanation-v37-text";
-      div.textContent = text;
-      box.appendChild(div);
-    }
-
-    if (!src && !text) {
-      box.innerHTML = '<p class="hint">등록된 해설이 없어.</p>';
-    }
-
-    bindViewer();
-  }
-
-  window.showExplanation = renderExplanation;
-  try { showExplanation = renderExplanation; } catch {}
-
-  document.addEventListener("click", (e) => {
-    const btn = e.target?.closest?.("#showExpBtn");
-    if (!btn) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
-    renderExplanation();
-  }, true);
-
-  function bindButton() {
-    const btn = q("showExpBtn");
-    if (btn) {
-      btn.onclick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        renderExplanation();
-      };
-    }
-    bindViewer();
-  }
-
-  [100, 500, 1200, 2500].forEach(ms => setTimeout(bindButton, ms));
-})();
-
-
-/* === v39: 해설 전체화면을 문제풀이 오버레이 밖(body portal)으로 분리 === */
-(function psatExplanationBodyPortalV39(){
+/* === v40: 해설 전체화면을 현재 fullscreen host 내부에 생성 === */
+(function psatExplanationFullscreenHostV40(){
   const view = {
     scale: 1,
     x: 0,
     y: 0,
     minScale: 0.1,
     maxScale: 8,
-    touch: null
+    touch: null,
+    pointers: new Map(),
+    pointerStart: null
   };
 
   function q(id) { return document.getElementById(id); }
   function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-  function currentProblemV39() {
+
+  function currentProblemV40() {
     try { return state && state.current ? state.current : null; } catch { return null; }
   }
-  function expSrcV39() { return currentProblemV39()?.explanationImageData || ""; }
-  function expTextV39() { return String(currentProblemV39()?.explanation || "").trim(); }
 
-  function ensurePortalV39() {
-    let portal = q("psatExpPortalV39");
-    if (portal) return portal;
+  function expSrcV40() {
+    return currentProblemV40()?.explanationImageData || "";
+  }
 
-    portal = document.createElement("div");
-    portal.id = "psatExpPortalV39";
-    portal.className = "hidden";
-    portal.innerHTML = `
-      <div id="psatExpToolbarV39">
-        <button id="psatExpCloseV39" type="button">닫기</button>
-        <button id="psatExpZoomOutV39" type="button">축소</button>
-        <button id="psatExpFitV39" type="button">맞춤</button>
-        <button id="psatExpZoomInV39" type="button">확대</button>
-        <span id="psatExpZoomLabelV39">100%</span>
-      </div>
-      <div id="psatExpStageV39">
-        <img id="psatExpImgV39" alt="해설 전체화면 이미지" />
-      </div>
-    `;
-    document.body.appendChild(portal);
-    bindPortalV39();
+  function expTextV40() {
+    return String(currentProblemV40()?.explanation || "").trim();
+  }
+
+  function hostV40() {
+    return document.fullscreenElement || q("solvePanel") || document.body;
+  }
+
+  function ensurePortalV40() {
+    let portal = q("psatExpPortalV40");
+    const host = hostV40();
+
+    if (!portal) {
+      portal = document.createElement("div");
+      portal.id = "psatExpPortalV40";
+      portal.className = "hidden";
+      portal.innerHTML = `
+        <div id="psatExpToolbarV40">
+          <button id="psatExpCloseV40" type="button">닫기</button>
+          <button id="psatExpZoomOutV40" type="button">축소</button>
+          <button id="psatExpFitV40" type="button">맞춤</button>
+          <button id="psatExpZoomInV40" type="button">확대</button>
+          <span id="psatExpZoomLabelV40">100%</span>
+        </div>
+        <div id="psatExpStageV40">
+          <img id="psatExpImgV40" alt="해설 전체화면 이미지" />
+        </div>
+      `;
+    }
+
+    // 핵심: 브라우저 fullscreen 상태면 body가 아니라 fullscreenElement 안에 넣어야 터치가 먹음
+    if (portal.parentElement !== host) {
+      host.appendChild(portal);
+    }
+
+    bindPortalV40();
     return portal;
   }
 
-  function stageV39() { return q("psatExpStageV39"); }
-  function imgV39() { return q("psatExpImgV39"); }
-  function isOpenV39() {
-    const portal = q("psatExpPortalV39");
+  function stageV40() { return q("psatExpStageV40"); }
+  function imgV40() { return q("psatExpImgV40"); }
+
+  function isOpenV40() {
+    const portal = q("psatExpPortalV40");
     return !!portal && !portal.classList.contains("hidden");
   }
 
-  function updateLabelV39() {
-    const label = q("psatExpZoomLabelV39");
+  function updateLabelV40() {
+    const label = q("psatExpZoomLabelV40");
     if (label) label.textContent = Math.round(view.scale * 100) + "%";
   }
 
-  function applyV39() {
-    const img = imgV39();
+  function applyV40() {
+    const img = imgV40();
     if (!img) return;
     img.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
-    updateLabelV39();
+    updateLabelV40();
   }
 
-  function fitV39() {
-    const st = stageV39();
-    const img = imgV39();
+  function fitV40() {
+    const st = stageV40();
+    const img = imgV40();
     if (!st || !img || !img.naturalWidth || !img.naturalHeight) return;
     const sw = Math.max(1, st.clientWidth);
     const sh = Math.max(1, st.clientHeight);
     const iw = img.naturalWidth;
     const ih = img.naturalHeight;
     const s = Math.min(sw / iw, sh / ih);
+
     view.minScale = Math.max(0.05, s * 0.4);
     view.scale = Math.max(0.05, s);
     view.x = (sw - iw * view.scale) / 2;
     view.y = (sh - ih * view.scale) / 2;
-    applyV39();
+    applyV40();
   }
 
-  function zoomAtV39(mult, clientX, clientY) {
-    const st = stageV39();
+  function zoomAtV40(mult, clientX, clientY) {
+    const st = stageV40();
     if (!st) return;
     const rect = st.getBoundingClientRect();
     const px = clientX == null ? rect.left + rect.width / 2 : clientX;
     const py = clientY == null ? rect.top + rect.height / 2 : clientY;
     const localX = px - rect.left;
     const localY = py - rect.top;
-    const old = view.scale;
+    const old = view.scale || 1;
     const next = clamp(old * mult, view.minScale, view.maxScale);
     const imageX = (localX - view.x) / old;
     const imageY = (localY - view.y) / old;
+
     view.scale = next;
     view.x = localX - imageX * next;
     view.y = localY - imageY * next;
-    applyV39();
+    applyV40();
   }
 
-  function openPortalV39(src) {
-    const portal = ensurePortalV39();
-    const img = imgV39();
+  function openPortalV40(src) {
+    const portal = ensurePortalV40();
+    const img = imgV40();
     if (!portal || !img || !src) {
       try { showToast("해설 이미지가 없어"); } catch {}
       return;
     }
+
     view.touch = null;
-    img.onload = () => setTimeout(fitV39, 30);
+    view.pointers.clear();
+    view.pointerStart = null;
+
+    img.onload = () => setTimeout(fitV40, 30);
     img.src = src;
+
     portal.classList.remove("hidden");
-    document.documentElement.classList.add("psat-exp-v39-open");
-    document.body.classList.add("psat-exp-v39-open");
+    document.documentElement.classList.add("psat-exp-v40-open");
+    document.body.classList.add("psat-exp-v40-open");
 
-    // 혹시 기존 풀스크린/문제 오버레이가 터치를 먹더라도 body 끝 portal이 최상단
-    document.body.appendChild(portal);
-
-    setTimeout(fitV39, 80);
-    setTimeout(fitV39, 300);
+    setTimeout(() => {
+      ensurePortalV40();
+      fitV40();
+    }, 80);
+    setTimeout(fitV40, 300);
   }
 
-  function closePortalV39() {
-    q("psatExpPortalV39")?.classList.add("hidden");
-    document.documentElement.classList.remove("psat-exp-v39-open");
-    document.body.classList.remove("psat-exp-v39-open");
+  function closePortalV40() {
+    q("psatExpPortalV40")?.classList.add("hidden");
+    document.documentElement.classList.remove("psat-exp-v40-open");
+    document.body.classList.remove("psat-exp-v40-open");
     view.touch = null;
+    view.pointers.clear();
+    view.pointerStart = null;
   }
 
-  function point(t) { return { x: t.clientX, y: t.clientY }; }
-  function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+  function pointFromTouch(t) { return { x: t.clientX, y: t.clientY }; }
+  function pointFromPointer(e) { return { x: e.clientX, y: e.clientY, id: e.pointerId }; }
+  function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y) || 1; }
   function mid(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
 
-  function touchStartV39(e) {
-    if (!isOpenV39()) return;
-    if (e.target?.closest?.("#psatExpToolbarV39")) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
-
-    if (e.touches.length >= 2) {
-      const a = point(e.touches[0]);
-      const b = point(e.touches[1]);
-      const c = mid(a, b);
+  function startGestureV40(points) {
+    const st = stageV40();
+    if (!st || !points.length) return;
+    if (points.length >= 2) {
+      const a = points[0], b = points[1], c = mid(a, b);
       view.touch = {
         mode: "pinch",
         startDist: Math.max(1, dist(a, b)),
@@ -5212,8 +4359,8 @@ setTimeout(() => {
         baseX: view.x,
         baseY: view.y
       };
-    } else if (e.touches.length === 1) {
-      const a = point(e.touches[0]);
+    } else {
+      const a = points[0];
       view.touch = {
         mode: "pan",
         startX: a.x,
@@ -5224,24 +4371,17 @@ setTimeout(() => {
     }
   }
 
-  function touchMoveV39(e) {
-    if (!isOpenV39()) return;
-    if (e.target?.closest?.("#psatExpToolbarV39")) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
+  function moveGestureV40(points) {
+    const st = stageV40();
+    if (!st || !points.length) return;
 
-    const st = stageV39();
-    if (!st) return;
-
-    if (e.touches.length >= 2) {
+    if (points.length >= 2) {
       if (!view.touch || view.touch.mode !== "pinch") {
-        touchStartV39(e);
+        startGestureV40(points);
         return;
       }
-      const a = point(e.touches[0]);
-      const b = point(e.touches[1]);
-      const c = mid(a, b);
+
+      const a = points[0], b = points[1], c = mid(a, b);
       const start = view.touch;
       const rect = st.getBoundingClientRect();
 
@@ -5254,117 +4394,184 @@ setTimeout(() => {
 
       view.x = (c.x - rect.left) - imageX * view.scale;
       view.y = (c.y - rect.top) - imageY * view.scale;
-      applyV39();
+      applyV40();
       return;
     }
 
-    if (e.touches.length === 1) {
+    if (points.length === 1) {
       if (!view.touch || view.touch.mode !== "pan") {
-        touchStartV39(e);
+        startGestureV40(points);
         return;
       }
-      const a = point(e.touches[0]);
+      const a = points[0];
       view.x = view.touch.baseX + (a.x - view.touch.startX);
       view.y = view.touch.baseY + (a.y - view.touch.startY);
-      applyV39();
+      applyV40();
     }
   }
 
-  function touchEndV39(e) {
-    if (!isOpenV39()) return;
-    if (e.target?.closest?.("#psatExpToolbarV39")) return;
+  function isToolbarTargetV40(e) {
+    return !!e.target?.closest?.("#psatExpToolbarV40");
+  }
+
+  function touchStartV40(e) {
+    if (!isOpenV40() || isToolbarTargetV40(e)) return;
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
-
-    if (e.touches.length === 1) {
-      const a = point(e.touches[0]);
-      view.touch = { mode: "pan", startX: a.x, startY: a.y, baseX: view.x, baseY: view.y };
-    } else {
-      view.touch = null;
-    }
+    startGestureV40(Array.from(e.touches).map(pointFromTouch));
   }
 
-  function bindPortalV39() {
-    q("psatExpCloseV39") && (q("psatExpCloseV39").onclick = closePortalV39);
-    q("psatExpFitV39") && (q("psatExpFitV39").onclick = fitV39);
-    q("psatExpZoomInV39") && (q("psatExpZoomInV39").onclick = () => zoomAtV39(1.25));
-    q("psatExpZoomOutV39") && (q("psatExpZoomOutV39").onclick = () => zoomAtV39(0.8));
+  function touchMoveV40(e) {
+    if (!isOpenV40() || isToolbarTargetV40(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    moveGestureV40(Array.from(e.touches).map(pointFromTouch));
+  }
 
-    if (!document.documentElement.dataset.psatExpV39TouchReady) {
-      document.documentElement.dataset.psatExpV39TouchReady = "1";
-      document.addEventListener("touchstart", touchStartV39, { capture: true, passive: false });
-      document.addEventListener("touchmove", touchMoveV39, { capture: true, passive: false });
-      document.addEventListener("touchend", touchEndV39, { capture: true, passive: false });
-      document.addEventListener("touchcancel", touchEndV39, { capture: true, passive: false });
+  function touchEndV40(e) {
+    if (!isOpenV40() || isToolbarTargetV40(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    const points = Array.from(e.touches).map(pointFromTouch);
+    if (points.length) startGestureV40(points);
+    else view.touch = null;
+  }
+
+  function pointerDownV40(e) {
+    if (!isOpenV40() || isToolbarTargetV40(e)) return;
+    if (e.pointerType === "mouse") return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    view.pointers.set(e.pointerId, pointFromPointer(e));
+    try { stageV40()?.setPointerCapture?.(e.pointerId); } catch {}
+    startGestureV40(Array.from(view.pointers.values()));
+  }
+
+  function pointerMoveV40(e) {
+    if (!isOpenV40() || isToolbarTargetV40(e)) return;
+    if (!view.pointers.has(e.pointerId)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    view.pointers.set(e.pointerId, pointFromPointer(e));
+    moveGestureV40(Array.from(view.pointers.values()));
+  }
+
+  function pointerEndV40(e) {
+    if (!view.pointers.has(e.pointerId)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    view.pointers.delete(e.pointerId);
+    const points = Array.from(view.pointers.values());
+    if (points.length) startGestureV40(points);
+    else view.touch = null;
+  }
+
+  function bindPortalV40() {
+    q("psatExpCloseV40") && (q("psatExpCloseV40").onclick = closePortalV40);
+    q("psatExpFitV40") && (q("psatExpFitV40").onclick = fitV40);
+    q("psatExpZoomInV40") && (q("psatExpZoomInV40").onclick = () => zoomAtV40(1.25));
+    q("psatExpZoomOutV40") && (q("psatExpZoomOutV40").onclick = () => zoomAtV40(0.8));
+
+    const st = stageV40();
+    if (st && !st.dataset.v40Ready) {
+      st.dataset.v40Ready = "1";
+      st.addEventListener("touchstart", touchStartV40, { capture: true, passive: false });
+      st.addEventListener("touchmove", touchMoveV40, { capture: true, passive: false });
+      st.addEventListener("touchend", touchEndV40, { capture: true, passive: false });
+      st.addEventListener("touchcancel", touchEndV40, { capture: true, passive: false });
+      st.addEventListener("pointerdown", pointerDownV40, { capture: true, passive: false });
+      st.addEventListener("pointermove", pointerMoveV40, { capture: true, passive: false });
+      st.addEventListener("pointerup", pointerEndV40, { capture: true, passive: false });
+      st.addEventListener("pointercancel", pointerEndV40, { capture: true, passive: false });
+      st.addEventListener("lostpointercapture", pointerEndV40, { capture: true, passive: false });
+    }
+
+    if (!document.documentElement.dataset.v40GlobalReady) {
+      document.documentElement.dataset.v40GlobalReady = "1";
       window.addEventListener("resize", () => {
-        if (isOpenV39()) setTimeout(fitV39, 120);
+        if (isOpenV40()) setTimeout(fitV40, 120);
+      });
+      document.addEventListener("fullscreenchange", () => {
+        if (isOpenV40()) {
+          ensurePortalV40();
+          setTimeout(fitV40, 100);
+        }
       });
     }
   }
 
-  function renderExplanationV39() {
+  function renderExplanationV40() {
     const box = q("explanationBox");
-    const p = currentProblemV39();
+    const p = currentProblemV40();
     if (!box || !p) {
       try { showToast("현재 문제가 없어"); } catch {}
       return;
     }
 
-    const src = expSrcV39();
-    const text = expTextV39();
+    const src = expSrcV40();
+    const text = expTextV40();
+
     box.classList.remove("hidden");
     box.innerHTML = "";
 
     if (src) {
       const btn = document.createElement("button");
-      btn.id = "expOpenFullscreenV39";
+      btn.id = "expOpenFullscreenV40";
       btn.type = "button";
-      btn.className = "secondary exp-open-btn-v39";
+      btn.className = "secondary exp-open-btn-v40";
       btn.textContent = "해설 전체화면으로 보기";
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        openPortalV39(src);
+        openPortalV40(src);
       });
       box.appendChild(btn);
 
       const img = document.createElement("img");
-      img.className = "explanation-v39-img";
+      img.className = "explanation-v40-img";
       img.alt = "해설 이미지";
       img.src = src;
-      img.addEventListener("click", () => openPortalV39(src));
+      img.addEventListener("click", () => openPortalV40(src));
       box.appendChild(img);
 
-      // 해설보기 버튼 누른 직후 바로 body portal로 열기
-      setTimeout(() => openPortalV39(src), 30);
+      // 해설보기 누르면 즉시 현재 fullscreen host 안에서 열기
+      setTimeout(() => openPortalV40(src), 30);
     }
 
     if (text) {
       const div = document.createElement("div");
-      div.className = "explanation-v39-text";
+      div.className = "explanation-v40-text";
       div.textContent = text;
       box.appendChild(div);
     }
 
-    if (!src && !text) box.innerHTML = '<p class="hint">등록된 해설이 없어.</p>';
-    ensurePortalV39();
+    if (!src && !text) {
+      box.innerHTML = '<p class="hint">등록된 해설이 없어.</p>';
+    }
+
+    ensurePortalV40();
   }
 
-  // 기존 해설보기 이벤트보다 먼저 실행해서 예전 오버레이 이벤트 차단
+  // 기존 showExplanation 이벤트가 실행되기 전에 차단
   document.addEventListener("click", (e) => {
-    const btn = e.target?.closest?.("#showExpBtn, #expOpenFullscreenV39");
+    const btn = e.target?.closest?.("#showExpBtn, #expOpenFullscreenV40");
     if (!btn) return;
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
-    if (btn.id === "expOpenFullscreenV39") openPortalV39(expSrcV39());
-    else renderExplanationV39();
+    if (btn.id === "expOpenFullscreenV40") openPortalV40(expSrcV40());
+    else renderExplanationV40();
   }, true);
 
   try {
-    window.showExplanation = renderExplanationV39;
-    showExplanation = renderExplanationV39;
+    window.showExplanation = renderExplanationV40;
+    showExplanation = renderExplanationV40;
   } catch {}
 
   [100, 500, 1200, 2500].forEach(ms => setTimeout(() => {
@@ -5373,9 +4580,9 @@ setTimeout(() => {
       btn.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        renderExplanationV39();
+        renderExplanationV40();
       };
     }
-    ensurePortalV39();
+    ensurePortalV40();
   }, ms));
 })();

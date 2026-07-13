@@ -1601,268 +1601,34 @@ body.reorder-active * {
   margin-top: -4px;
 }
 
-/* === v33 해설보기 전체화면 복구/고정 === */
-.exp-fullscreen-v33 {
-  position: fixed !important;
-  inset: 0 !important;
-  z-index: 999999 !important;
-  background: rgba(15,23,42,.96) !important;
-  display: flex !important;
-  flex-direction: column !important;
-  touch-action: none !important;
-}
-.exp-fullscreen-v33.hidden {
-  display: none !important;
-}
-.exp-fullscreen-toolbar-v33 {
-  flex: 0 0 auto !important;
-  display: flex !important;
-  gap: 6px !important;
-  align-items: center !important;
-  padding: max(8px, env(safe-area-inset-top)) 8px 8px !important;
-  background: rgba(2,6,23,.92) !important;
-  border-bottom: 1px solid rgba(255,255,255,.16) !important;
-  overflow-x: auto !important;
-  white-space: nowrap !important;
-}
-.exp-fullscreen-toolbar-v33 button {
-  border: 0 !important;
-  border-radius: 999px !important;
-  padding: 8px 12px !important;
-  background: #fff !important;
-  color: #111827 !important;
-  font-weight: 900 !important;
-  font-size: .86rem !important;
-}
-#expZoomLabelV33 {
-  color: #fff !important;
-  font-weight: 900 !important;
-  font-size: .86rem !important;
-  padding: 0 4px !important;
-}
-.exp-stage-v33 {
-  flex: 1 1 auto !important;
-  position: relative !important;
-  overflow: hidden !important;
-  touch-action: none !important;
-  background: #111827 !important;
-}
-#expImgV33 {
-  position: absolute !important;
-  left: 0 !important;
-  top: 0 !important;
-  max-width: none !important;
-  max-height: none !important;
-  transform-origin: 0 0 !important;
-  user-select: none !important;
-  -webkit-user-drag: none !important;
-  will-change: transform !important;
-  background: #fff !important;
-}
-.exp-fullscreen-open-v33 {
-  overflow: hidden !important;
-}
-.exp-open-btn-v33 {
-  margin-top: 8px !important;
-  width: 100% !important;
-  border-radius: 14px !important;
-  padding: 10px !important;
-  font-weight: 950 !important;
-}
-
-/* === v36 해설 확대/전체화면 최종 보정 === */
-.exp-fullscreen-v36 {
-  position: fixed !important;
-  inset: 0 !important;
-  z-index: 2147483647 !important;
-  background: rgba(15,23,42,.98) !important;
-  display: flex !important;
-  flex-direction: column !important;
-  touch-action: none !important;
-}
-.exp-fullscreen-v36.hidden {
-  display: none !important;
-}
-.exp-fullscreen-toolbar-v36 {
-  flex: 0 0 auto !important;
-  display: flex !important;
-  gap: 6px !important;
-  align-items: center !important;
-  padding: max(8px, env(safe-area-inset-top)) 8px 8px !important;
-  background: rgba(2,6,23,.95) !important;
-  border-bottom: 1px solid rgba(255,255,255,.18) !important;
-  overflow-x: auto !important;
-  white-space: nowrap !important;
-}
-.exp-fullscreen-toolbar-v36 button {
-  border: 0 !important;
-  border-radius: 999px !important;
-  padding: 8px 12px !important;
-  background: #fff !important;
-  color: #111827 !important;
-  font-weight: 950 !important;
-  font-size: .86rem !important;
-}
-#expZoomLabelV36 {
-  color: #fff !important;
-  font-weight: 950 !important;
-  font-size: .86rem !important;
-  padding: 0 4px !important;
-}
-.exp-stage-v36 {
-  flex: 1 1 auto !important;
-  position: relative !important;
-  overflow: hidden !important;
-  touch-action: none !important;
-  background: #111827 !important;
-}
-#expImgV36 {
-  position: absolute !important;
-  left: 0 !important;
-  top: 0 !important;
-  max-width: none !important;
-  max-height: none !important;
-  transform-origin: 0 0 !important;
-  user-select: none !important;
-  -webkit-user-drag: none !important;
-  will-change: transform !important;
-  background: #fff !important;
-}
-.explanation-v36-img {
-  max-width: 100% !important;
-  display: block !important;
-  border-radius: 12px !important;
-  background: #fff !important;
-  margin: 8px 0 !important;
-}
-.explanation-v36-text {
-  white-space: pre-wrap !important;
-  line-height: 1.6 !important;
-  margin-top: 8px !important;
-}
-.exp-open-btn-v36 {
-  width: 100% !important;
-  margin-top: 8px !important;
-  padding: 10px !important;
-  border-radius: 14px !important;
-  font-weight: 950 !important;
-}
-.exp-fullscreen-open-v36 {
-  overflow: hidden !important;
-}
-
-/* === v37 해설 전체화면 touch pinch 직접 처리 === */
-.exp-fullscreen-v37 {
-  position: fixed !important;
-  inset: 0 !important;
-  z-index: 2147483647 !important;
-  background: rgba(15,23,42,.98) !important;
-  display: flex !important;
-  flex-direction: column !important;
-  touch-action: none !important;
-  overscroll-behavior: none !important;
-}
-.exp-fullscreen-v37.hidden {
-  display: none !important;
-}
-.exp-fullscreen-toolbar-v37 {
-  flex: 0 0 auto !important;
-  display: flex !important;
-  gap: 6px !important;
-  align-items: center !important;
-  padding: max(8px, env(safe-area-inset-top)) 8px 8px !important;
-  background: rgba(2,6,23,.96) !important;
-  border-bottom: 1px solid rgba(255,255,255,.18) !important;
-  overflow-x: auto !important;
-  white-space: nowrap !important;
-  touch-action: manipulation !important;
-}
-.exp-fullscreen-toolbar-v37 button {
-  border: 0 !important;
-  border-radius: 999px !important;
-  padding: 8px 12px !important;
-  background: #fff !important;
-  color: #111827 !important;
-  font-weight: 950 !important;
-  font-size: .86rem !important;
-}
-#expZoomLabelV37 {
-  color: #fff !important;
-  font-weight: 950 !important;
-  font-size: .86rem !important;
-  padding: 0 4px !important;
-}
-.exp-stage-v37 {
-  flex: 1 1 auto !important;
-  position: relative !important;
-  overflow: hidden !important;
-  touch-action: none !important;
-  -ms-touch-action: none !important;
-  overscroll-behavior: none !important;
-  background: #111827 !important;
-  user-select: none !important;
-  -webkit-user-select: none !important;
-}
-#expImgV37 {
-  position: absolute !important;
-  left: 0 !important;
-  top: 0 !important;
-  max-width: none !important;
-  max-height: none !important;
-  transform-origin: 0 0 !important;
-  user-select: none !important;
-  -webkit-user-select: none !important;
-  -webkit-user-drag: none !important;
-  will-change: transform !important;
-  background: #fff !important;
-  touch-action: none !important;
-  pointer-events: none !important;
-}
-.explanation-v37-img {
-  max-width: 100% !important;
-  display: block !important;
-  border-radius: 12px !important;
-  background: #fff !important;
-  margin: 8px 0 !important;
-}
-.explanation-v37-text {
-  white-space: pre-wrap !important;
-  line-height: 1.6 !important;
-  margin-top: 8px !important;
-}
-.exp-open-btn-v37 {
-  width: 100% !important;
-  margin-top: 8px !important;
-  padding: 10px !important;
-  border-radius: 14px !important;
-  font-weight: 950 !important;
-}
-.exp-fullscreen-open-v37 {
-  overflow: hidden !important;
-  touch-action: none !important;
-}
-
-/* === v39 해설 전체화면 body portal === */
-html.psat-exp-v39-open,
-body.psat-exp-v39-open {
+/* === v40 해설 전체화면: fullscreen host 내부 portal === */
+html.psat-exp-v40-open,
+body.psat-exp-v40-open {
   overflow: hidden !important;
   touch-action: none !important;
   overscroll-behavior: none !important;
 }
-#psatExpPortalV39 {
+
+#psatExpPortalV40 {
   position: fixed !important;
   inset: 0 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
   z-index: 2147483647 !important;
   background: rgba(15,23,42,.985) !important;
   display: flex !important;
   flex-direction: column !important;
   touch-action: none !important;
   overscroll-behavior: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
-#psatExpPortalV39.hidden {
+
+#psatExpPortalV40.hidden {
   display: none !important;
 }
-#psatExpToolbarV39 {
+
+#psatExpToolbarV40 {
   flex: 0 0 auto !important;
   display: flex !important;
   gap: 6px !important;
@@ -1874,7 +1640,8 @@ body.psat-exp-v39-open {
   white-space: nowrap !important;
   touch-action: manipulation !important;
 }
-#psatExpToolbarV39 button {
+
+#psatExpToolbarV40 button {
   border: 0 !important;
   border-radius: 999px !important;
   padding: 8px 12px !important;
@@ -1883,13 +1650,15 @@ body.psat-exp-v39-open {
   font-weight: 950 !important;
   font-size: .86rem !important;
 }
-#psatExpZoomLabelV39 {
+
+#psatExpZoomLabelV40 {
   color: #fff !important;
   font-weight: 950 !important;
   font-size: .86rem !important;
   padding: 0 4px !important;
 }
-#psatExpStageV39 {
+
+#psatExpStageV40 {
   flex: 1 1 auto !important;
   position: relative !important;
   overflow: hidden !important;
@@ -1899,7 +1668,8 @@ body.psat-exp-v39-open {
   user-select: none !important;
   -webkit-user-select: none !important;
 }
-#psatExpImgV39 {
+
+#psatExpImgV40 {
   position: absolute !important;
   left: 0 !important;
   top: 0 !important;
@@ -1914,21 +1684,24 @@ body.psat-exp-v39-open {
   touch-action: none !important;
   pointer-events: none !important;
 }
-.exp-open-btn-v39 {
+
+.exp-open-btn-v40 {
   width: 100% !important;
   margin-top: 8px !important;
   padding: 10px !important;
   border-radius: 14px !important;
   font-weight: 950 !important;
 }
-.explanation-v39-img {
+
+.explanation-v40-img {
   max-width: 100% !important;
   display: block !important;
   border-radius: 12px !important;
   background: #fff !important;
   margin: 8px 0 !important;
 }
-.explanation-v39-text {
+
+.explanation-v40-text {
   white-space: pre-wrap !important;
   line-height: 1.6 !important;
   margin-top: 8px !important;
