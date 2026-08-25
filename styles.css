@@ -1706,3 +1706,37 @@ body.psat-exp-v40-open {
   line-height: 1.6 !important;
   margin-top: 8px !important;
 }
+
+
+/* === v41 복습 목록 번호 + 안 푼 문제 === */
+.review-mode-buttons {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+}
+
+.item.review-item.numbered {
+  grid-template-columns: 42px 82px 1fr !important;
+  align-items: start !important;
+}
+
+.item.review-item.numbered .list-number {
+  display: flex !important;
+}
+
+@media (max-width: 560px) {
+  .review-mode-buttons {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 520px) {
+  .item.review-item.numbered {
+    grid-template-columns: 34px 72px 1fr !important;
+    gap: 8px !important;
+    padding: 9px !important;
+  }
+
+  .item.review-item.numbered > img {
+    width: 72px !important;
+    height: 102px !important;
+  }
+}

@@ -4586,3 +4586,175 @@ setTimeout(() => {
     ensurePortalV40();
   }, ms));
 })();
+
+
+/* === v41: 복습 목록 번호 표시 + 안 푼 문제 선택 === */
+(function reviewNumbersAndUnseenV41() {
+  function reviewModeLabelV41(mode) {
+    if (mode === "correct") return "정답복습";
+    if (mode === "unseen") return "안 푼 문제";
+    return "오답복습";
+  }
+
+  function reviewEmptyMessageV41(mode) {
+    if (mode === "correct") return "아직 정답복습할 문제가 없어.";
+    if (mode === "unseen") return "현재 조건에 맞는 안 푼 문제가 없어.";
+    return "현재 복습할 오답이 없어.";
+  }
+
+  function reviewFiltersV41(list) {
+    const subject = els.reviewSubjectFilter?.value || "";
+    const category = $("reviewCategoryFilter")?.value || "";
+    const year = els.reviewYearFilter?.value || "";
+    const yearText = (els.reviewYearTextFilter?.value || "").trim().toLowerCase();
+
+    return list.filter((p) => {
+      const problemYear = normalizedYear(p.year);
+      if (subject && !subjectMatches(p, subject)) return false;
+      if (typeof categoryMatchesV28 === "function" && !categoryMatchesV28(p, category)) return false;
+      if (year && problemYear !== year) return false;
+      if (yearText && !problemYear.toLowerCase().includes(yearText)) return false;
+      return true;
+    });
+  }
+
+  const reviewListForModeV41Original = reviewListForMode;
+  reviewListForMode = function(mode) {
+    if (mode !== "unseen") return reviewListForModeV41Original(mode);
+
+    // 아직 한 번도 풀지 않은 문제만.
+    // 목록 탭과 같은 기본 문제 순서를 유지한다.
+    return reviewFiltersV41(state.problems)
+      .filter((p) => !(Number(p.attempts) > 0));
+  };
+
+  const problemItemV41Original = problemItem;
+  problemItem = function(p, wrongOnly, displayNumber = "", reviewMode = "") {
+    const div = problemItemV41Original(p, wrongOnly, displayNumber, reviewMode);
+
+    if (wrongOnly && displayNumber !== "" && displayNumber != null) {
+      div.classList.add("numbered");
+
+      if (!div.querySelector(".list-number")) {
+        const badge = document.createElement("div");
+        badge.className = "list-number";
+        badge.setAttribute("aria-label", "문제 번호");
+        badge.textContent = String(displayNumber);
+        div.prepend(badge);
+      }
+    }
+
+    if (wrongOnly && reviewMode === "unseen") {
+      const paragraphs = div.querySelectorAll(":scope > div > p");
+      if (paragraphs[1]) {
+        let suffix = "";
+        if (p.flagged) suffix += " · 다시보기 지정";
+        if (p.explanationImageData) suffix += " · 해설이미지 있음";
+        paragraphs[1].textContent = `안 푼 문제 · 아직 풀이기록 없음${suffix}`;
+      }
+
+      div.querySelectorAll('button[data-action="solve"]').forEach((btn) => {
+        btn.textContent = "풀기";
+      });
+
+      const detail = div.querySelector(".review-time-detail");
+      if (detail) {
+        detail.innerHTML = `
+          <strong>풀이 기록</strong>
+          <span>아직 풀이기록 없음</span>
+          <button data-action="solve" data-id="${p.id}" data-context="wrong" type="button">이 문제 풀기</button>
+        `;
+      }
+    }
+
+    return div;
+  };
+
+  function setReviewModeV41(mode) {
+    state.reviewMode = mode;
+
+    if (els.reviewWrongBtn) {
+      els.reviewWrongBtn.classList.toggle("secondary", mode !== "wrong");
+    }
+    if (els.reviewCorrectBtn) {
+      els.reviewCorrectBtn.classList.toggle("secondary", mode !== "correct");
+    }
+
+    const unseenBtn = $("reviewUnseenBtn");
+    if (unseenBtn) {
+      unseenBtn.classList.toggle("secondary", mode !== "unseen");
+    }
+
+    if (els.reviewWrongRandomBtn) {
+      els.reviewWrongRandomBtn.classList.add("secondary");
+    }
+
+    renderWrongList();
+  }
+
+  // 기존 버튼의 화살표 함수도 실행 시점에 setReviewMode를 참조하므로
+  // 최종 함수를 v41로 교체한다.
+  setReviewMode = setReviewModeV41;
+
+  renderWrongList = function() {
+    const mode = state.reviewMode || "wrong";
+    const list = reviewListForMode(mode);
+    els.wrongList.innerHTML = "";
+
+    if (els.reviewListTitle) {
+      const subject = els.reviewSubjectFilter?.value || "전체";
+      const category = $("reviewCategoryFilter")?.value || "전체";
+      const year = els.reviewYearFilter?.value || els.reviewYearTextFilter?.value || "전체";
+      els.reviewListTitle.textContent =
+        `${reviewModeLabelV41(mode)} · 대분류 ${subject} · 중간분류 ${category} · 연도/회차 ${year}`;
+    }
+
+    if (!list.length) {
+      els.wrongList.innerHTML = `<p class="hint">${reviewEmptyMessageV41(mode)}</p>`;
+      return;
+    }
+
+    list.forEach((p, index) => {
+      // 목록 탭과 동일하게 현재 표시목록의 맨 아래가 1번
+      const displayNumber = list.length - index;
+      els.wrongList.appendChild(
+        problemItem(p, true, displayNumber, mode)
+      );
+    });
+  };
+
+  const handleItemClickV41Original = handleItemClick;
+  handleItemClick = async function(event) {
+    const btn = event.target.closest('button[data-action]');
+
+    if (
+      btn &&
+      btn.dataset.action === "solve" &&
+      btn.dataset.context === "wrong" &&
+      state.reviewMode === "unseen"
+    ) {
+      const p = state.problems.find((item) => item.id === btn.dataset.id);
+      if (!p) return;
+      startReviewProblem(p, "안 푼 문제 복습");
+      return;
+    }
+
+    return handleItemClickV41Original(event);
+  };
+
+  function bindV41ReviewButton() {
+    const btn = $("reviewUnseenBtn");
+    if (!btn || btn.dataset.v41Ready) return;
+    btn.dataset.v41Ready = "1";
+    btn.addEventListener("click", () => setReviewModeV41("unseen"));
+  }
+
+  bindV41ReviewButton();
+  setTimeout(bindV41ReviewButton, 300);
+  setTimeout(bindV41ReviewButton, 900);
+
+  // 초기 화면이 이미 그려진 경우도 v41 번호 형식으로 다시 그림.
+  setTimeout(() => {
+    if ($("wrongView")?.classList.contains("active")) renderWrongList();
+  }, 700);
+})();
