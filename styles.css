@@ -1748,3 +1748,10 @@ body.psat-exp-v40-open {
   visibility: visible !important;
   opacity: 1 !important;
 }
+
+/* === v43 분류별 복습 번호 === */
+#wrongList .item.review-item.numbered .list-number {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}

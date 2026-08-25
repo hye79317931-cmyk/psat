@@ -4829,3 +4829,60 @@ setTimeout(() => {
     if ($("wrongView")?.classList.contains("active")) renderWrongList();
   }, 600);
 })();
+
+
+/* === v43: 복습 분류 선택 시 해당 분류 안에서 번호 다시 매기기 === */
+(function reviewFilteredSequenceV43() {
+  renderWrongList = function() {
+    const mode = state.reviewMode || "wrong";
+    const list = reviewListForMode(mode);
+    els.wrongList.innerHTML = "";
+
+    if (els.reviewListTitle) {
+      const subject = els.reviewSubjectFilter?.value || "전체";
+      const category = $("reviewCategoryFilter")?.value || "전체";
+      const year = els.reviewYearFilter?.value || els.reviewYearTextFilter?.value || "전체";
+
+      let modeLabel = "오답복습";
+      if (mode === "correct") modeLabel = "정답복습";
+      if (mode === "unseen") modeLabel = "안 푼 문제";
+
+      els.reviewListTitle.textContent =
+        `${modeLabel} · 대분류 ${subject} · 중간분류 ${category} · 연도/회차 ${year}`;
+    }
+
+    if (!list.length) {
+      let message = "현재 복습할 오답이 없어.";
+      if (mode === "correct") message = "아직 정답복습할 문제가 없어.";
+      if (mode === "unseen") message = "현재 조건에 맞는 안 푼 문제가 없어.";
+      els.wrongList.innerHTML = `<p class="hint">${message}</p>`;
+      return;
+    }
+
+    list.forEach((p, index) => {
+      // 현재 선택된 분류 결과 안에서 다시 순번 부여.
+      // 기존 목록 탭 규칙과 같이 화면 아래쪽이 1번.
+      const displayNumber = list.length - index;
+      els.wrongList.appendChild(
+        problemItem(p, true, displayNumber, mode)
+      );
+    });
+  };
+
+  $("reviewSubjectFilter")?.addEventListener("change", () => {
+    setTimeout(renderWrongList, 0);
+  });
+  $("reviewCategoryFilter")?.addEventListener("change", () => {
+    setTimeout(renderWrongList, 0);
+  });
+  $("reviewYearFilter")?.addEventListener("change", () => {
+    setTimeout(renderWrongList, 0);
+  });
+  $("reviewYearTextFilter")?.addEventListener("input", () => {
+    setTimeout(renderWrongList, 0);
+  });
+
+  setTimeout(() => {
+    if ($("wrongView")?.classList.contains("active")) renderWrongList();
+  }, 500);
+})();
