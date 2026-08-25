@@ -1740,3 +1740,11 @@ body.psat-exp-v40-open {
     height: 102px !important;
   }
 }
+
+
+/* === v42 복습 번호는 필터 후에도 항상 표시 === */
+#wrongList .item.review-item.numbered .list-number {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}

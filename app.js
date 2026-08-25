@@ -4758,3 +4758,74 @@ setTimeout(() => {
     if ($("wrongView")?.classList.contains("active")) renderWrongList();
   }, 700);
 })();
+
+
+/* === v42: 복습에서 대분류/중간분류 필터 후에도 목록 순번 유지 === */
+(function reviewStableListNumbersV42() {
+  function listNumberForProblemV42(problem) {
+    if (!problem) return "";
+
+    // 문제 목록 탭의 전체 정렬 순서를 기준으로 번호 계산.
+    // 맨 아래 문제 = 1번이라는 기존 규칙 유지.
+    const sorted = typeof sortProblemsForDisplay === "function"
+      ? sortProblemsForDisplay(state.problems)
+      : [...state.problems];
+
+    const index = sorted.findIndex((p) => p.id === problem.id);
+    if (index < 0) return "";
+
+    return sorted.length - index;
+  }
+
+  renderWrongList = function() {
+    const mode = state.reviewMode || "wrong";
+    const list = reviewListForMode(mode);
+    els.wrongList.innerHTML = "";
+
+    if (els.reviewListTitle) {
+      const subject = els.reviewSubjectFilter?.value || "전체";
+      const category = $("reviewCategoryFilter")?.value || "전체";
+      const year = els.reviewYearFilter?.value || els.reviewYearTextFilter?.value || "전체";
+
+      let modeLabel = "오답복습";
+      if (mode === "correct") modeLabel = "정답복습";
+      if (mode === "unseen") modeLabel = "안 푼 문제";
+
+      els.reviewListTitle.textContent =
+        `${modeLabel} · 대분류 ${subject} · 중간분류 ${category} · 연도/회차 ${year}`;
+    }
+
+    if (!list.length) {
+      let message = "현재 복습할 오답이 없어.";
+      if (mode === "correct") message = "아직 정답복습할 문제가 없어.";
+      if (mode === "unseen") message = "현재 조건에 맞는 안 푼 문제가 없어.";
+      els.wrongList.innerHTML = `<p class="hint">${message}</p>`;
+      return;
+    }
+
+    for (const p of list) {
+      const displayNumber = listNumberForProblemV42(p);
+      els.wrongList.appendChild(
+        problemItem(p, true, displayNumber, mode)
+      );
+    }
+  };
+
+  // 필터 변경 직후도 번호를 다시 계산해서 표시.
+  $("reviewSubjectFilter")?.addEventListener("change", () => {
+    setTimeout(renderWrongList, 0);
+  });
+  $("reviewCategoryFilter")?.addEventListener("change", () => {
+    setTimeout(renderWrongList, 0);
+  });
+  $("reviewYearFilter")?.addEventListener("change", () => {
+    setTimeout(renderWrongList, 0);
+  });
+  $("reviewYearTextFilter")?.addEventListener("input", () => {
+    setTimeout(renderWrongList, 0);
+  });
+
+  setTimeout(() => {
+    if ($("wrongView")?.classList.contains("active")) renderWrongList();
+  }, 600);
+})();
