@@ -708,6 +708,7 @@ function loadCurrentProblem(problem) {
   els.solvePanel.classList.remove('hidden');
   els.resultBox.classList.add('hidden');
   els.explanationBox.classList.add('hidden');
+  els.nextBtn?.classList.add('hidden');
   els.resultBox.className = 'result hidden';
   els.explanationBox.textContent = '';
   els.problemTitle.textContent = `문제 ${state.queueIndex + 1}/${state.queue.length}`;
@@ -846,10 +847,15 @@ async function checkAnswer(options = {}) {
     showExplanation();
   }
   await refresh();
-  if (options.autoAdvance) {
-    clearTimeout(state.autoNextTimer);
+
+  // v44: 채점 후 자동으로 다음 문제로 넘어가지 않는다.
+  clearTimeout(state.autoNextTimer);
+  state.autoNextTimer = null;
+
+  if (els.nextBtn) {
     const isLast = !state.session || state.queueIndex + 1 >= state.queue.length;
-    state.autoNextTimer = setTimeout(() => nextProblem(), isLast ? 450 : 650);
+    els.nextBtn.textContent = isLast ? '풀이 완료' : '다음 문제';
+    els.nextBtn.classList.remove('hidden');
   }
 }
 
@@ -881,6 +887,7 @@ function showExplanation() {
 async function nextProblem() {
   clearTimeout(state.autoNextTimer);
   state.autoNextTimer = null;
+  els.nextBtn?.classList.add('hidden');
   if (!state.current) return;
   await saveInkToCurrentProblem(true);
   if (state.queueIndex + 1 >= state.queue.length) {
@@ -901,6 +908,7 @@ function finishSession(timeout) {
   state.current = null;
   exitSolveFullscreen();
   els.solvePanel.classList.add('hidden');
+  els.nextBtn?.classList.add('hidden');
   state.lastSession = {
     label: session.label || '랜덤 풀이',
     timeout: !!timeout,
@@ -4886,3 +4894,7 @@ setTimeout(() => {
     if ($("wrongView")?.classList.contains("active")) renderWrongList();
   }, 500);
 })();
+
+
+/* === v44: 채점 후 왼쪽 다음 문제 버튼 === */
+window.psatManualNextLeftV44 = true;
