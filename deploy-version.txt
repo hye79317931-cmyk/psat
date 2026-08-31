@@ -1,2 +1,2 @@
-PSAT v48 incremental Firebase sync
-created: 2026-08-31T06:32:33.556156
+PSAT v49 answer timer stop + exit summary
+created: 2026-08-31T12:23:04.623073

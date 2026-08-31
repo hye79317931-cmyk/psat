@@ -1829,3 +1829,67 @@ body.psat-exp-v40-open {
 
 /* v48 incremental sync status */
 #firebaseSyncStatusV45.sync-error-v46{color:#c62828!important;font-weight:900!important;}
+
+
+/* === v49 중단/나가기 중간결과 팝업 === */
+.exit-summary-overlay-v49 {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(0,0,0,.58);
+  backdrop-filter: blur(4px);
+}
+.exit-summary-overlay-v49.hidden {
+  display: none !important;
+}
+.exit-summary-card-v49 {
+  width: min(92vw, 460px);
+  border-radius: 22px;
+  padding: 22px;
+  background: var(--card, #fff);
+  color: var(--text, #172033);
+  box-shadow: 0 18px 60px rgba(0,0,0,.32);
+}
+.exit-summary-card-v49 h2 {
+  margin: 0 0 16px;
+  font-size: 22px;
+}
+.exit-summary-grid-v49 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0,1fr));
+  gap: 10px;
+}
+.exit-summary-grid-v49 > div {
+  border: 1px solid var(--line, #dce2ee);
+  border-radius: 15px;
+  padding: 13px 8px;
+  text-align: center;
+}
+.exit-summary-grid-v49 span {
+  display: block;
+  font-size: 12px;
+  opacity: .72;
+  margin-bottom: 6px;
+}
+.exit-summary-grid-v49 strong {
+  display: block;
+  font-size: 19px;
+}
+.exit-summary-actions-v49 {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.exit-summary-actions-v49 button {
+  flex: 1;
+  min-height: 48px;
+}
+@media (max-width: 480px) {
+  .exit-summary-grid-v49 {
+    grid-template-columns: 1fr;
+  }
+}

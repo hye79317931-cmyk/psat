@@ -547,7 +547,8 @@ function buildPausedSessionSnapshot() {
       correct: state.session.correct || 0,
       problemIds: [...(state.session.problemIds || state.queue.map((p) => p.id))],
       answeredIds: [...(state.session.answeredIds || [])],
-      wrongIds: [...(state.session.wrongIds || [])]
+      wrongIds: [...(state.session.wrongIds || [])],
+      solveElapsedMsV49: Math.max(0, Number(state.session.solveElapsedMsV49 || 0))
     }
   };
 }
@@ -596,7 +597,8 @@ function resumePausedSession() {
     elapsedOnFinish: 0,
     problemIds: savedSession.problemIds?.length ? [...savedSession.problemIds] : queue.map((p) => p.id),
     answeredIds: [...(savedSession.answeredIds || [])],
-    wrongIds: [...(savedSession.wrongIds || [])]
+    wrongIds: [...(savedSession.wrongIds || [])],
+    solveElapsedMsV49: Math.max(0, Number(savedSession.solveElapsedMsV49 || 0))
   };
   const current = state.problems.find((p) => p.id === paused.currentId) || queue[state.queueIndex];
   loadCurrentProblem(current);
@@ -631,6 +633,7 @@ function startSession(problems, options = {}) {
     answered: 0,
     correct: 0,
     elapsedOnFinish: 0,
+    solveElapsedMsV49: 0,
     problemIds: state.queue.map((p) => p.id),
     answeredIds: [],
     wrongIds: []
@@ -655,6 +658,7 @@ function startDirectProblem(problem) {
     answered: 0,
     correct: 0,
     elapsedOnFinish: 0,
+    solveElapsedMsV49: 0,
     problemIds: [problem.id],
     answeredIds: [],
     wrongIds: []
@@ -680,6 +684,7 @@ function startReviewProblem(problem, label = '복습') {
     answered: 0,
     correct: 0,
     elapsedOnFinish: 0,
+    solveElapsedMsV49: 0,
     problemIds: [problem.id],
     answeredIds: [],
     wrongIds: []
@@ -698,6 +703,7 @@ function loadCurrentProblem(problem) {
   }
   state.selectedAnswer = null;
   state.checked = false;
+  state.answerPauseStartedAtV49 = 0;
   state.questionStart = Date.now();
   resetGestureState();
   state.drawTool = 'pen';
@@ -791,15 +797,20 @@ async function checkAnswer(options = {}) {
     showToast('정답 번호를 먼저 선택해줘');
     return;
   }
+  // v49: 정답 체크를 누른 그 순간 시간을 확정하고 타이머를 정지한다.
+  const answerCheckedAtV49 = Date.now();
+  const elapsed = Math.max(0, answerCheckedAtV49 - state.questionStart);
+  stopTimer();
+  state.answerPauseStartedAtV49 = answerCheckedAtV49;
+
   await saveInkToCurrentProblem(true);
   const p = state.current;
-  const elapsed = Date.now() - state.questionStart;
   const isCorrect = Number(state.selectedAnswer) === Number(p.answer);
 
   p.attempts = (p.attempts || 0) + 1;
   p.totalTimeMs = (p.totalTimeMs || 0) + elapsed;
   p.lastTimeMs = elapsed;
-  p.lastAnsweredAt = Date.now();
+  p.lastAnsweredAt = answerCheckedAtV49;
   p.lastResult = isCorrect ? 'correct' : 'wrong';
 
   if (isCorrect) {
@@ -822,11 +833,12 @@ async function checkAnswer(options = {}) {
     correctAnswer: Number(p.answer),
     isCorrect,
     elapsedMs: elapsed,
-    createdAt: Date.now()
+    createdAt: answerCheckedAtV49
   });
 
   state.checked = true;
   if (state.session) {
+    state.session.solveElapsedMsV49 = Math.max(0, Number(state.session.solveElapsedMsV49 || 0)) + elapsed;
     state.session.answered += 1;
     if (!state.session.answeredIds.includes(p.id)) state.session.answeredIds.push(p.id);
     if (isCorrect) state.session.correct += 1;
@@ -887,6 +899,14 @@ function showExplanation() {
 async function nextProblem() {
   clearTimeout(state.autoNextTimer);
   state.autoNextTimer = null;
+
+  // v49: 채점 후 다음 문제를 누르기까지 기다린 시간은 풀이시간/제한시간에서 제외.
+  if (state.answerPauseStartedAtV49) {
+    const pausedForV49 = Math.max(0, Date.now() - state.answerPauseStartedAtV49);
+    if (state.session?.endAt) state.session.endAt += pausedForV49;
+    state.answerPauseStartedAtV49 = 0;
+  }
+
   els.nextBtn?.classList.add('hidden');
   if (!state.current) return;
   await saveInkToCurrentProblem(true);
@@ -5197,4 +5217,121 @@ window.psatManualNextLeftV44 = true;
   }
   window.addEventListener('online',()=>{if(user&&dirty.size)flushDirty();});
   setTimeout(start,400);
+})();
+
+
+/* === v49: 중단/나가기 전에 현재 풀이 현황 표시 === */
+(function psatExitSummaryV49() {
+  let modalOpenedAtV49 = 0;
+  let currentElapsedAtOpenV49 = 0;
+  let wasTimerRunningV49 = false;
+
+  function v49El(id) {
+    return document.getElementById(id);
+  }
+
+  function currentSolveElapsedV49() {
+    const solved = Math.max(0, Number(state.session?.solveElapsedMsV49 || 0));
+
+    if (!state.current || state.checked || !state.questionStart) {
+      return solved;
+    }
+
+    return solved + Math.max(0, Date.now() - state.questionStart);
+  }
+
+  function openExitSummaryV49() {
+    if (!state.current || !state.session) {
+      pauseCurrentSession();
+      return;
+    }
+
+    const now = Date.now();
+    currentElapsedAtOpenV49 = currentSolveElapsedV49();
+    wasTimerRunningV49 = !!state.timerId;
+
+    // 팝업을 보는 시간은 풀이시간에 포함하지 않음.
+    stopTimer();
+    modalOpenedAtV49 = now;
+
+    const answered = Math.max(0, Number(state.session.answered || 0));
+    const wrong = Math.max(
+      0,
+      Array.isArray(state.session.wrongIds)
+        ? state.session.wrongIds.length
+        : answered - Number(state.session.correct || 0)
+    );
+
+    v49El("exitAnsweredV49").textContent = `${answered}문제`;
+    v49El("exitWrongV49").textContent = `${wrong}문제`;
+    v49El("exitElapsedV49").textContent = formatLongTime(currentElapsedAtOpenV49);
+
+    v49El("exitSummaryOverlayV49").classList.remove("hidden");
+  }
+
+  function closeExitSummaryAndContinueV49() {
+    const overlay = v49El("exitSummaryOverlayV49");
+    overlay?.classList.add("hidden");
+
+    const pauseMs = modalOpenedAtV49
+      ? Math.max(0, Date.now() - modalOpenedAtV49)
+      : 0;
+
+    // 아직 채점 전 문제라면 문제 시작시각을 뒤로 밀어 팝업 시간이 제외되게 함.
+    if (state.current && !state.checked && state.questionStart) {
+      state.questionStart += pauseMs;
+    }
+
+    // 제한시간 세션도 팝업 시간만큼 연장.
+    if (state.session?.endAt) {
+      state.session.endAt += pauseMs;
+    }
+
+    modalOpenedAtV49 = 0;
+
+    // 채점 후라면 원래대로 타이머가 멈춘 상태 유지.
+    if (state.current && !state.checked && wasTimerRunningV49) {
+      updateTimers();
+      startTimer();
+    }
+  }
+
+  async function confirmExitV49() {
+    v49El("exitSummaryOverlayV49")?.classList.add("hidden");
+
+    // 기존 pauseCurrentSession의 wall-clock 계산에 팝업 시간이 들어가지 않도록 보정.
+    const now = Date.now();
+    const sessionSolved = Math.max(0, Number(state.session?.solveElapsedMsV49 || 0));
+
+    if (state.current && !state.checked && state.questionStart) {
+      const currentPart = Math.max(0, currentElapsedAtOpenV49 - sessionSolved);
+      state.questionStart = now - currentPart;
+    } else if (state.current && state.checked) {
+      state.questionStart = now;
+    }
+
+    if (state.session) {
+      state.session.startedAt = now - currentElapsedAtOpenV49;
+      if (state.session.endAt && modalOpenedAtV49) {
+        state.session.endAt += Math.max(0, now - modalOpenedAtV49);
+      }
+    }
+
+    modalOpenedAtV49 = 0;
+    await pauseCurrentSession();
+  }
+
+  // 기존 exitSolveBtn의 bubble listener보다 capture 단계에서 먼저 처리.
+  document.addEventListener("click", event => {
+    const btn = event.target?.closest?.("#exitSolveBtn");
+    if (!btn) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    openExitSummaryV49();
+  }, true);
+
+  v49El("continueSolveV49")?.addEventListener("click", closeExitSummaryAndContinueV49);
+  v49El("confirmExitSolveV49")?.addEventListener("click", confirmExitV49);
 })();
