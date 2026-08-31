@@ -1826,3 +1826,6 @@ body.psat-exp-v40-open {
   color:#c62828 !important;
   font-weight:900 !important;
 }
+
+/* v48 incremental sync status */
+#firebaseSyncStatusV45.sync-error-v46{color:#c62828!important;font-weight:900!important;}

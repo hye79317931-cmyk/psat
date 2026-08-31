@@ -4898,9 +4898,8 @@ setTimeout(() => {
 
 /* === v44: 채점 후 왼쪽 다음 문제 버튼 === */
 window.psatManualNextLeftV44 = true;
-
-/* === v47: 큰 스크린샷도 멈추지 않는 분할 동기화 === */
-(function psatFirebaseSyncV47() {
+/* === v48: 변경된 항목만 실시간 동기화 === */
+(function psatFirebaseSyncV48() {
   const FIREBASE_CONFIG = {
     apiKey: "AIzaSyDrjifzM4Gjbs7EpHCKarrI_E96FrDZLKo",
     authDomain: "psat-sync.firebaseapp.com",
@@ -4911,17 +4910,21 @@ window.psatManualNextLeftV44 = true;
     appId: "1:18268452172:web:6700a64f9828e496da4be9"
   };
 
-  const ROOT="psatData";
-  const LAST_EMAIL_KEY="psat-firebase-email-v46";
-  const CHUNK_SIZE=220000; // 약 220KB 단위: 큰 base64 이미지도 작은 요청으로 전송
-  const WRITE_TIMEOUT_MS=25000;
-  const RETRIES=3;
+  const ROOT = "psatData";
+  const LAST_EMAIL_KEY = "psat-firebase-email-v46";
+  const CHUNK_SIZE = 220000;
+  const WRITE_TIMEOUT_MS = 35000;
+  const RETRIES = 3;
 
   let app=null, auth=null, db=null, user=null;
-  let applying=false, pushing=false, pushTimer=null, uiBound=false;
-  let problemsRef=null, historyRef=null, remoteTimer=null;
+  let applyingRemote=false, fullPushRunning=false, uiBound=false;
+  let dirtyTimer=null, dirtyRunning=false;
+  const dirty = new Map();
+  let problemsRef=null, historyRef=null;
+  let refreshTimer=null;
 
   const el=id=>document.getElementById(id);
+  const pathForStore=name => name===STORES.problems ? "problems" : name===STORES.history ? "history" : null;
 
   function status(msg,ok=false,err=false){
     const n=el("firebaseSyncStatusV45");
@@ -4934,14 +4937,10 @@ window.psatManualNextLeftV44 = true;
   function niceError(e){
     const code=String(e?.code||"");
     const msg=String(e?.message||e||"");
-    if(code.includes("permission-denied")||/permission_denied/i.test(msg))
-      return "Firebase 권한 거부 · Rules 게시 확인";
-    if(code.includes("network-request-failed"))
-      return "인터넷 연결 확인";
-    if(code.includes("invalid-credential")||code.includes("wrong-password"))
-      return "이메일 또는 비밀번호 확인";
-    if(code.includes("email-already-in-use"))
-      return "이미 만든 계정이야 · 로그인 버튼 사용";
+    if(code.includes("permission-denied")||/permission_denied/i.test(msg)) return "Firebase 권한 거부 · Rules 확인";
+    if(code.includes("network-request-failed")) return "인터넷 연결 확인";
+    if(code.includes("invalid-credential")||code.includes("wrong-password")) return "이메일 또는 비밀번호 확인";
+    if(code.includes("email-already-in-use")) return "이미 만든 계정이야 · 로그인 버튼 사용";
     if(/timeout/i.test(msg)) return "업로드 시간초과";
     return msg||"동기화 오류";
   }
@@ -4949,10 +4948,9 @@ window.psatManualNextLeftV44 = true;
   function initFirebase(){
     if(app) return;
     if(!window.firebase) throw new Error("Firebase SDK 로딩 실패");
-    try{ app=firebase.initializeApp(FIREBASE_CONFIG,"psat-v47"); }
-    catch(e){ app=firebase.app("psat-v47"); }
-    auth=app.auth();
-    db=app.database();
+    try{ app=firebase.initializeApp(FIREBASE_CONFIG,"psat-v48"); }
+    catch(e){ app=firebase.app("psat-v48"); }
+    auth=app.auth(); db=app.database();
     auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
   }
 
@@ -4961,369 +4959,242 @@ window.psatManualNextLeftV44 = true;
       .replace(/\./g,"%2E").replace(/#/g,"%23").replace(/\$/g,"%24")
       .replace(/\[/g,"%5B").replace(/\]/g,"%5D").replace(/\//g,"%2F");
   }
-
   function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
-
   async function withTimeout(promise,ms,label){
     let timer;
-    const timeout=new Promise((_,reject)=>{
-      timer=setTimeout(()=>reject(new Error(`timeout:${label}`)),ms);
-    });
-    try{ return await Promise.race([promise,timeout]); }
-    finally{ clearTimeout(timer); }
+    const timeout=new Promise((_,reject)=>{ timer=setTimeout(()=>reject(new Error(`timeout:${label}`)),ms); });
+    try{return await Promise.race([promise,timeout]);} finally{clearTimeout(timer);}
   }
-
   async function retryWrite(fn,label){
-    let lastErr;
-    for(let attempt=1;attempt<=RETRIES;attempt++){
-      try{
-        return await withTimeout(fn(),WRITE_TIMEOUT_MS,label);
-      }catch(e){
-        lastErr=e;
-        if(attempt<RETRIES){
-          status(`${label} 재시도 ${attempt}/${RETRIES-1}`);
-          await sleep(700*attempt);
-        }
+    let last;
+    for(let a=1;a<=RETRIES;a++){
+      try{return await withTimeout(fn(),WRITE_TIMEOUT_MS,label);}catch(e){
+        last=e;
+        if(a<RETRIES){ status(`${label} 재시도 ${a}/${RETRIES-1}`); await sleep(800*a); }
       }
     }
-    throw lastErr;
+    throw last;
   }
-
   function splitText(text){
-    const out=[];
-    for(let i=0;i<text.length;i+=CHUNK_SIZE){
-      out.push(text.slice(i,i+CHUNK_SIZE));
-    }
+    const out=[]; for(let i=0;i<text.length;i+=CHUNK_SIZE) out.push(text.slice(i,i+CHUNK_SIZE));
     return out.length?out:[""];
   }
-
-  function rowFingerprint(row){
-    // 서버와 동일 여부를 빠르게 비교하기 위한 가벼운 지문
-    return [
-      String(row?.updatedAt||0),
-      String(row?.lastAnsweredAt||0),
-      String(row?.attempts||0),
-      String(row?.correct||0),
-      String(row?.wrongActive?1:0),
-      String(row?.imageData?.length||0),
-      String(row?.explanationImageData?.length||0),
-      String(row?.annotations?.length||0)
-    ].join(":");
+  function hashText(text){
+    let h=2166136261;
+    for(let i=0;i<text.length;i++){h^=text.charCodeAt(i); h=Math.imul(h,16777619);}
+    return (h>>>0).toString(16)+":"+text.length;
   }
 
-  async function uploadRowChunked(path,row,index,total){
-    const key=keyOf(row.id);
-    const rowRef=db.ref(`${ROOT}/${user.uid}/${path}/${key}`);
-    const fp=rowFingerprint(row);
-
-    // v47 형식 또는 v46 평문 형식이 이미 같은 내용이면 스킵 → 중간부터 이어올리기 가능
-    const oldSnap=await withTimeout(rowRef.once("value"),WRITE_TIMEOUT_MS,`${index}/${total} 확인`);
-    const old=oldSnap.val();
-
-    if(old){
-      if(old.__v47===1 && old.fingerprint===fp && old.complete===true) return "skip";
-      if(old.id===row.id && rowFingerprint(old)===fp) return "skip";
-    }
-
-    const jsonText=JSON.stringify(row);
-    const chunks=splitText(jsonText);
-
-    // 기존 값 제거 후 메타부터 표시. complete=false인 동안 다른 기기는 적용하지 않음.
-    await retryWrite(
-      ()=>rowRef.set({
-        __v47:1,
-        complete:false,
-        fingerprint:fp,
-        chunkCount:chunks.length,
-        totalChars:jsonText.length,
-        updatedAt:Date.now(),
-        chunks:{}
-      }),
-      `문제 ${index}/${total} 준비`
-    );
-
+  async function uploadOne(path,row,label){
+    const ref=db.ref(`${ROOT}/${user.uid}/${path}/${keyOf(row.id)}`);
+    const text=JSON.stringify(row);
+    const fp=hashText(text);
+    const chunks=splitText(text);
+    await retryWrite(()=>ref.set({__v48:1,complete:false,fingerprint:fp,chunkCount:chunks.length,totalChars:text.length,chunks:{}}),`${label} 준비`);
     for(let i=0;i<chunks.length;i++){
-      status(`문제 ${index}/${total} · 조각 ${i+1}/${chunks.length}`);
-      await retryWrite(
-        ()=>rowRef.child(`chunks/${i}`).set(chunks[i]),
-        `문제 ${index}/${total} 조각 ${i+1}`
-      );
+      status(`${label} · 조각 ${i+1}/${chunks.length}`);
+      await retryWrite(()=>ref.child(`chunks/${i}`).set(chunks[i]),`${label} 조각 ${i+1}`);
     }
-
-    await retryWrite(
-      ()=>rowRef.update({complete:true,finishedAt:Date.now()}),
-      `문제 ${index}/${total} 완료`
-    );
-    return "uploaded";
+    await retryWrite(()=>ref.update({complete:true,finishedAt:Date.now()}),`${label} 완료`);
   }
 
-  async function removeDeletedRows(path,rows){
-    const ref=db.ref(`${ROOT}/${user.uid}/${path}`);
-    const snap=await withTimeout(ref.once("value"),WRITE_TIMEOUT_MS,`${path} 목록 확인`);
-    const old=snap.val()||{};
-    const keep=new Set(rows.map(r=>keyOf(r.id)));
-    for(const key of Object.keys(old)){
-      if(!keep.has(key)){
-        await retryWrite(()=>ref.child(key).remove(),`${path} 삭제 반영`);
-      }
-    }
+  async function removeOne(path,id,label){
+    await retryWrite(()=>db.ref(`${ROOT}/${user.uid}/${path}/${keyOf(id)}`).remove(),label);
   }
 
-  async function uploadStore(path,storeName,label){
-    const rows=await getAll(storeName);
-    await removeDeletedRows(path,rows);
-
-    let uploaded=0, skipped=0;
-    for(let i=0;i<rows.length;i++){
-      const row=rows[i];
-      status(`${label} 업로드 중 · ${i+1}/${rows.length}`);
-      const result=await uploadRowChunked(path,row,i+1,rows.length);
-      if(result==="skip") skipped++;
-      else uploaded++;
-    }
-    return {count:rows.length,uploaded,skipped};
-  }
-
-  async function pushAll(){
-    if(!user||!db) throw new Error("먼저 로그인해줘");
-    if(applying) return;
-    if(pushing) {
-      status("이미 업로드 진행 중이야");
-      return;
-    }
-    pushing=true;
-    try{
-      status("이 폰 데이터 확인 중...");
-      const p=await uploadStore("problems",STORES.problems,"문제");
-      const h=await uploadStore("history",STORES.history,"풀이기록");
-
-      await retryWrite(
-        ()=>db.ref(`${ROOT}/${user.uid}/_meta`).set({
-          updatedAt:firebase.database.ServerValue.TIMESTAMP,
-          problemCount:p.count,
-          historyCount:h.count,
-          version:47
-        }),
-        "마지막 저장"
-      );
-      status(`클라우드 저장 완료 · ${p.count}문제`,true);
-      return p;
-    }finally{
-      pushing=false;
-    }
-  }
-
-  function decodeV47Row(value){
+  function decodeRow(value){
     if(!value) return null;
-    if(value.__v47!==1) return value; // v46 구형 데이터 호환
+    if(value.__v48!==1 && value.__v47!==1) return value;
     if(value.complete!==true) return null;
-    const count=Number(value.chunkCount||0);
-    const chunks=value.chunks||{};
+    const count=Number(value.chunkCount||0), chunks=value.chunks||{};
     let text="";
-    for(let i=0;i<count;i++){
-      if(typeof chunks[i]!=="string") return null;
-      text+=chunks[i];
-    }
-    try{ return JSON.parse(text); }
-    catch(e){
-      console.warn("v47 row parse failed",e);
-      return null;
-    }
+    for(let i=0;i<count;i++){ if(typeof chunks[i]!=="string") return null; text+=chunks[i]; }
+    try{return JSON.parse(text);}catch{return null;}
   }
-
   function decodeCollection(obj){
     if(!obj||typeof obj!=="object") return [];
-    const rows=[];
-    for(const value of Object.values(obj)){
-      const row=decodeV47Row(value);
-      if(row&&row.id) rows.push(row);
-    }
-    return rows;
+    const out=[]; for(const v of Object.values(obj)){const row=decodeRow(v); if(row?.id) out.push(row);} return out;
   }
 
+  async function nativePut(storeName,row){
+    await tx(storeName,'readwrite',store=>store.put(row));
+  }
+  async function nativeRemove(storeName,id){
+    await tx(storeName,'readwrite',store=>store.delete(id));
+  }
   async function replaceStore(storeName,rows){
-    const idb=await openDb();
-    await new Promise((resolve,reject)=>{
-      const tx=idb.transaction(storeName,"readwrite");
-      const st=tx.objectStore(storeName);
-      st.clear();
-      for(const row of rows) st.put(row);
-      tx.oncomplete=resolve;
-      tx.onerror=()=>reject(tx.error);
+    await tx(storeName,'readwrite',store=>{
+      store.clear();
+      for(const row of rows) store.put(row);
     });
+  }
+  function scheduleRefresh(){
+    clearTimeout(refreshTimer);
+    refreshTimer=setTimeout(()=>{ refresh().catch(console.warn); },180);
   }
 
   async function pullAll(){
     if(!user||!db) throw new Error("먼저 로그인해줘");
-    if(pushing) return false; // 업로드 중 자기 변경 이벤트로 내려받기 방지
-    applying=true;
+    applyingRemote=true;
     try{
       status("클라우드 데이터 받는 중...");
       const [ps,hs]=await Promise.all([
-        withTimeout(db.ref(`${ROOT}/${user.uid}/problems`).once("value"),WRITE_TIMEOUT_MS,"문제 받기"),
-        withTimeout(db.ref(`${ROOT}/${user.uid}/history`).once("value"),WRITE_TIMEOUT_MS,"기록 받기")
+        withTimeout(db.ref(`${ROOT}/${user.uid}/problems`).once('value'),WRITE_TIMEOUT_MS,'문제 받기'),
+        withTimeout(db.ref(`${ROOT}/${user.uid}/history`).once('value'),WRITE_TIMEOUT_MS,'기록 받기')
       ]);
-      if(!ps.exists()&&!hs.exists()){
-        status("클라우드가 비어 있어");
-        return false;
-      }
-      const pRows=decodeCollection(ps.val());
-      const hRows=decodeCollection(hs.val());
-      await replaceStore(STORES.problems,pRows);
-      await replaceStore(STORES.history,hRows);
+      if(!ps.exists()&&!hs.exists()){status("클라우드가 비어 있어"); return false;}
+      const pRows=decodeCollection(ps.val()), hRows=decodeCollection(hs.val());
+      await replaceStore(STORES.problems,pRows); await replaceStore(STORES.history,hRows);
       await refresh();
       status(`동기화됨 · ${pRows.length}문제`,true);
       return true;
-    }finally{
-      applying=false;
+    } finally { applyingRemote=false; }
+  }
+
+  async function fullUploadStore(path,storeName,label){
+    const rows=await getAll(storeName);
+    const cloud=(await withTimeout(db.ref(`${ROOT}/${user.uid}/${path}`).once('value'),WRITE_TIMEOUT_MS,`${label} 목록 확인`)).val()||{};
+    const keep=new Set(rows.map(r=>keyOf(r.id)));
+    for(const k of Object.keys(cloud)){ if(!keep.has(k)) await removeOne(path,decodeURIComponent(k),`${label} 삭제 반영`); }
+    for(let i=0;i<rows.length;i++){
+      const row=rows[i], k=keyOf(row.id), old=cloud[k], text=JSON.stringify(row), fp=hashText(text);
+      if(old && (old.__v48===1||old.__v47===1) && old.complete===true && old.fingerprint===fp){
+        status(`${label} 확인 · ${i+1}/${rows.length}`); continue;
+      }
+      status(`${label} 업로드 · ${i+1}/${rows.length}`);
+      await uploadOne(path,row,`${label} ${i+1}/${rows.length}`);
     }
+    return rows.length;
+  }
+
+  async function pushAll(){
+    if(!user||!db) throw new Error("먼저 로그인해줘");
+    if(fullPushRunning||applyingRemote) return;
+    fullPushRunning=true;
+    try{
+      const pc=await fullUploadStore('problems',STORES.problems,'문제');
+      const hc=await fullUploadStore('history',STORES.history,'풀이기록');
+      await retryWrite(()=>db.ref(`${ROOT}/${user.uid}/_meta`).set({updatedAt:firebase.database.ServerValue.TIMESTAMP,problemCount:pc,historyCount:hc,version:48}),'마지막 저장');
+      status(`클라우드 저장 완료 · ${pc}문제`,true);
+    } finally { fullPushRunning=false; }
+  }
+
+  function queueDirty(storeName,action,id,row){
+    if(!user||applyingRemote||fullPushRunning) return;
+    const path=pathForStore(storeName); if(!path||!id) return;
+    dirty.set(`${storeName}:${id}`,{storeName,path,action,id,row});
+    clearTimeout(dirtyTimer); dirtyTimer=setTimeout(flushDirty,650);
+  }
+
+  async function flushDirty(){
+    if(dirtyRunning||!user||applyingRemote||fullPushRunning||!dirty.size) return;
+    dirtyRunning=true;
+    const jobs=Array.from(dirty.values()); dirty.clear();
+    try{
+      for(let i=0;i<jobs.length;i++){
+        const j=jobs[i];
+        status(`변경사항 동기화 · ${i+1}/${jobs.length}`);
+        if(j.action==='remove') await removeOne(j.path,j.id,'삭제 동기화');
+        else await uploadOne(j.path,j.row,'변경사항');
+      }
+      status(`실시간 동기화됨 · ${state.problems?.length||0}문제`,true);
+    }catch(e){
+      for(const j of jobs) dirty.set(`${j.storeName}:${j.id}`,j);
+      status(`자동 동기화 실패 · ${niceError(e)}`,false,true);
+    }finally{dirtyRunning=false;}
+  }
+
+  // 기본 put 안의 예전 전체동기화 예약을 무력화하고, 실제 변경된 항목만 큐에 넣는다.
+  scheduleSyncForLocalChange=function(){ };
+  const basePut=put, baseRemove=remove, baseClearStore=clearStore;
+  put=async function(storeName,value){
+    const result=await basePut(storeName,value);
+    if(!applyingRemote) queueDirty(storeName,'put',value?.id,value);
+    return result;
+  };
+  remove=async function(storeName,id){
+    const result=await baseRemove(storeName,id);
+    if(!applyingRemote) queueDirty(storeName,'remove',id,null);
+    return result;
+  };
+  clearStore=async function(storeName){
+    const result=await baseClearStore(storeName);
+    if(!applyingRemote && user){
+      const path=pathForStore(storeName);
+      if(path){
+        try{await retryWrite(()=>db.ref(`${ROOT}/${user.uid}/${path}`).remove(),'전체 삭제 동기화');}
+        catch(e){status(`삭제 동기화 실패 · ${niceError(e)}`,false,true);}
+      }
+    }
+    return result;
+  };
+
+  async function applyRemoteSnapshot(storeName,snap){
+    if(fullPushRunning||dirtyRunning) return;
+    const row=decodeRow(snap.val()); if(!row?.id) return;
+    applyingRemote=true;
+    try{ await nativePut(storeName,row); scheduleRefresh(); }
+    finally{ applyingRemote=false; }
+  }
+  async function removeRemoteSnapshot(storeName,snap){
+    if(fullPushRunning||dirtyRunning) return;
+    let id=null;
+    const old=decodeRow(snap.val()); if(old?.id) id=old.id;
+    if(!id) return;
+    applyingRemote=true;
+    try{ await nativeRemove(storeName,id); scheduleRefresh(); }
+    finally{ applyingRemote=false; }
   }
 
   function stopRemote(){
-    if(problemsRef) problemsRef.off();
-    if(historyRef) historyRef.off();
+    if(problemsRef) problemsRef.off(); if(historyRef) historyRef.off();
     problemsRef=historyRef=null;
   }
-
   function startRemote(){
-    stopRemote();
-    if(!user||!db) return;
+    stopRemote(); if(!user||!db) return;
     problemsRef=db.ref(`${ROOT}/${user.uid}/problems`);
     historyRef=db.ref(`${ROOT}/${user.uid}/history`);
-    const changed=()=>{
-      if(applying||pushing) return;
-      clearTimeout(remoteTimer);
-      remoteTimer=setTimeout(()=>{
-        pullAll().catch(e=>status(`자동 동기화 실패 · ${niceError(e)}`,false,true));
-      },800);
-    };
-    problemsRef.on("value",changed);
-    historyRef.on("value",changed);
+    problemsRef.on('child_changed',snap=>applyRemoteSnapshot(STORES.problems,snap).catch(console.warn));
+    problemsRef.on('child_removed',snap=>removeRemoteSnapshot(STORES.problems,snap).catch(console.warn));
+    historyRef.on('child_changed',snap=>applyRemoteSnapshot(STORES.history,snap).catch(console.warn));
+    historyRef.on('child_removed',snap=>removeRemoteSnapshot(STORES.history,snap).catch(console.warn));
   }
 
   async function afterLogin(u){
-    user=u;
-    localStorage.setItem(LAST_EMAIL_KEY,u.email||"");
-    if(el("firebaseEmailV45")&&u.email) el("firebaseEmailV45").value=u.email;
-    el("firebaseLogoutBtnV45")?.classList.remove("hidden");
-    status(`로그인됨 · ${u.email||""}`,true);
-
-    const meta=await withTimeout(
-      db.ref(`${ROOT}/${u.uid}/_meta`).once("value"),
-      WRITE_TIMEOUT_MS,
-      "클라우드 확인"
-    );
-
-    // v46 업로드가 중간에 멈췄어도 로컬 데이터를 기준으로 이어서 올린다.
-    // meta가 v47이면 정상 클라우드로 보고 먼저 내려받는다.
-    const m=meta.val();
-    if(m&&Number(m.version)>=47){
-      await pullAll();
-    }else{
-      await pushAll();
-    }
+    user=u; localStorage.setItem(LAST_EMAIL_KEY,u.email||'');
+    if(el('firebaseEmailV45')&&u.email) el('firebaseEmailV45').value=u.email;
+    el('firebaseLogoutBtnV45')?.classList.remove('hidden');
+    status(`로그인됨 · ${u.email||''}`,true);
+    const meta=await withTimeout(db.ref(`${ROOT}/${u.uid}/_meta`).once('value'),WRITE_TIMEOUT_MS,'클라우드 확인');
+    if(meta.exists()) await pullAll(); else await pushAll();
     startRemote();
   }
 
-  function schedulePush(){
-    if(!user||applying||pushing) return;
-    clearTimeout(pushTimer);
-    pushTimer=setTimeout(()=>{
-      pushAll().catch(e=>status(`자동 업로드 실패 · ${niceError(e)}`,false,true));
-    },1200);
-  }
-
   function bindUI(){
-    if(uiBound) return;
-    uiBound=true;
-
-    const email=el("firebaseEmailV45");
-    if(email) email.value=localStorage.getItem(LAST_EMAIL_KEY)||email.value||"";
-
-    el("firebaseSignupBtnV45")?.addEventListener("click",async()=>{
-      try{
-        const e=el("firebaseEmailV45")?.value.trim()||"";
-        const p=el("firebasePasswordV45")?.value||"";
-        if(!e||p.length<6) throw new Error("이메일과 6자 이상 비밀번호 입력");
-        initFirebase();
-        status("계정 만드는 중...");
-        const cred=await auth.createUserWithEmailAndPassword(e,p);
-        await afterLogin(cred.user);
-      }catch(err){
-        const m=niceError(err); status(`계정 생성 실패 · ${m}`,false,true); showToast(m);
-      }
+    if(uiBound) return; uiBound=true;
+    const email=el('firebaseEmailV45'); if(email) email.value=localStorage.getItem(LAST_EMAIL_KEY)||email.value||'';
+    el('firebaseSignupBtnV45')?.addEventListener('click',async()=>{
+      try{const e=el('firebaseEmailV45')?.value.trim()||'',p=el('firebasePasswordV45')?.value||''; if(!e||p.length<6) throw new Error('이메일과 6자 이상 비밀번호 입력'); initFirebase(); const c=await auth.createUserWithEmailAndPassword(e,p); await afterLogin(c.user);}catch(err){const m=niceError(err);status(`계정 생성 실패 · ${m}`,false,true);showToast(m);}
     });
-
-    el("firebaseLoginBtnV45")?.addEventListener("click",async()=>{
-      try{
-        const e=el("firebaseEmailV45")?.value.trim()||"";
-        const p=el("firebasePasswordV45")?.value||"";
-        if(!e||!p) throw new Error("이메일/비밀번호 입력");
-        initFirebase();
-        status("로그인 중...");
-        const cred=await auth.signInWithEmailAndPassword(e,p);
-        await afterLogin(cred.user);
-      }catch(err){
-        const m=niceError(err); status(`로그인 실패 · ${m}`,false,true); showToast(m);
-      }
+    el('firebaseLoginBtnV45')?.addEventListener('click',async()=>{
+      try{const e=el('firebaseEmailV45')?.value.trim()||'',p=el('firebasePasswordV45')?.value||''; if(!e||!p) throw new Error('이메일/비밀번호 입력'); initFirebase(); status('로그인 중...'); const c=await auth.signInWithEmailAndPassword(e,p); await afterLogin(c.user);}catch(err){const m=niceError(err);status(`로그인 실패 · ${m}`,false,true);showToast(m);}
     });
-
-    el("firebaseLogoutBtnV45")?.addEventListener("click",async()=>{
-      try{
-        stopRemote();
-        if(auth) await auth.signOut();
-        user=null;
-        status("로그아웃됨");
-      }catch(e){ status(niceError(e),false,true); }
-    });
-
-    el("firebasePushBtnV45")?.addEventListener("click",async()=>{
-      try{
-        await pushAll();
-        showToast("폰 데이터 업로드 완료");
-      }catch(err){
-        const m=niceError(err);
-        status(`업로드 실패 · ${m}`,false,true);
-        showToast(m);
-      }
-    });
-
-    el("firebasePullBtnV45")?.addEventListener("click",async()=>{
-      try{
-        await pullAll();
-        showToast("클라우드 데이터 받기 완료");
-      }catch(err){
-        const m=niceError(err);
-        status(`받기 실패 · ${m}`,false,true);
-        showToast(m);
-      }
-    });
+    el('firebaseLogoutBtnV45')?.addEventListener('click',async()=>{try{stopRemote();if(auth)await auth.signOut();user=null;status('로그아웃됨');}catch(e){status(niceError(e),false,true);}});
+    el('firebasePushBtnV45')?.addEventListener('click',async()=>{try{await pushAll();showToast('폰 데이터 업로드 완료');}catch(err){const m=niceError(err);status(`업로드 실패 · ${m}`,false,true);showToast(m);}});
+    el('firebasePullBtnV45')?.addEventListener('click',async()=>{try{await pullAll();showToast('클라우드 데이터 받기 완료');}catch(err){const m=niceError(err);status(`받기 실패 · ${m}`,false,true);showToast(m);}});
   }
-
-  const oldSchedule=typeof scheduleSyncForLocalChange==="function"?scheduleSyncForLocalChange:null;
-  scheduleSyncForLocalChange=function(storeName){
-    try{ oldSchedule?.(storeName); }catch{}
-    schedulePush();
-  };
 
   function start(){
     bindUI();
     try{
       initFirebase();
       auth.onAuthStateChanged(u=>{
-        if(!u){
-          user=null;
-          status("Firebase 연결됨 · 로그인 필요");
-          return;
-        }
+        if(!u){user=null;status('Firebase 연결됨 · 로그인 필요');return;}
         if(user?.uid===u.uid) return;
         afterLogin(u).catch(e=>status(`자동 동기화 실패 · ${niceError(e)}`,false,true));
       });
-    }catch(e){
-      status(`Firebase 초기화 실패 · ${niceError(e)}`,false,true);
-    }
+    }catch(e){status(`Firebase 초기화 실패 · ${niceError(e)}`,false,true);}
   }
-
-  window.addEventListener("online",()=>{ if(user) schedulePush(); });
+  window.addEventListener('online',()=>{if(user&&dirty.size)flushDirty();});
   setTimeout(start,400);
 })();
