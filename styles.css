@@ -1893,3 +1893,14 @@ body.psat-exp-v40-open {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* === v50 전체화면 내부 중단 결과창 === */
+#solvePanel:fullscreen #exitSummaryOverlayV49,
+:fullscreen #exitSummaryOverlayV49 {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 2147483647 !important;
+}
