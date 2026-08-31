@@ -4899,9 +4899,8 @@ setTimeout(() => {
 /* === v44: 채점 후 왼쪽 다음 문제 버튼 === */
 window.psatManualNextLeftV44 = true;
 
-
-/* === v46: Firebase 동기화 재구축 === */
-(function psatFirebaseSyncV46() {
+/* === v47: 큰 스크린샷도 멈추지 않는 분할 동기화 === */
+(function psatFirebaseSyncV47() {
   const FIREBASE_CONFIG = {
     apiKey: "AIzaSyDrjifzM4Gjbs7EpHCKarrI_E96FrDZLKo",
     authDomain: "psat-sync.firebaseapp.com",
@@ -4911,115 +4910,420 @@ window.psatManualNextLeftV44 = true;
     messagingSenderId: "18268452172",
     appId: "1:18268452172:web:6700a64f9828e496da4be9"
   };
-  const LAST_EMAIL_KEY = "psat-firebase-email-v46";
-  const ROOT = "psatData";
-  const META_KEY = "_meta";
-  let fbApp=null, fbAuth=null, fbDb=null, fbUser=null;
-  let applyingRemote=false, pushTimer=null, uiBound=false, authWatching=false;
-  let problemRef=null, historyRef=null, problemHandler=null, historyHandler=null;
-  const q=id=>document.getElementById(id);
-  function setStatus(message, ok=false, error=false){
-    const el=q("firebaseSyncStatusV45"); if(!el)return;
-    el.textContent=message; el.classList.toggle("sync-ok-v45",!!ok); el.classList.toggle("sync-error-v46",!!error);
+
+  const ROOT="psatData";
+  const LAST_EMAIL_KEY="psat-firebase-email-v46";
+  const CHUNK_SIZE=220000; // 약 220KB 단위: 큰 base64 이미지도 작은 요청으로 전송
+  const WRITE_TIMEOUT_MS=25000;
+  const RETRIES=3;
+
+  let app=null, auth=null, db=null, user=null;
+  let applying=false, pushing=false, pushTimer=null, uiBound=false;
+  let problemsRef=null, historyRef=null, remoteTimer=null;
+
+  const el=id=>document.getElementById(id);
+
+  function status(msg,ok=false,err=false){
+    const n=el("firebaseSyncStatusV45");
+    if(!n) return;
+    n.textContent=msg;
+    n.classList.toggle("sync-ok-v45",!!ok);
+    n.classList.toggle("sync-error-v46",!!err);
   }
-  function friendlyError(err){
-    const code=String(err?.code||""); const msg=String(err?.message||err||"");
-    if(code.includes("permission-denied")||/permission_denied/i.test(msg)) return "권한 거부됨 · Firebase Rules 게시 여부 확인";
-    if(code.includes("network-request-failed")) return "네트워크 오류 · 인터넷 연결 확인";
-    if(code.includes("wrong-password")||code.includes("invalid-credential")) return "이메일 또는 비밀번호가 맞지 않아";
-    if(code.includes("email-already-in-use")) return "이미 만든 계정이야 · 로그인 버튼을 눌러";
-    if(code.includes("weak-password")) return "비밀번호는 6자 이상이어야 해";
-    return msg||"알 수 없는 동기화 오류";
+
+  function niceError(e){
+    const code=String(e?.code||"");
+    const msg=String(e?.message||e||"");
+    if(code.includes("permission-denied")||/permission_denied/i.test(msg))
+      return "Firebase 권한 거부 · Rules 게시 확인";
+    if(code.includes("network-request-failed"))
+      return "인터넷 연결 확인";
+    if(code.includes("invalid-credential")||code.includes("wrong-password"))
+      return "이메일 또는 비밀번호 확인";
+    if(code.includes("email-already-in-use"))
+      return "이미 만든 계정이야 · 로그인 버튼 사용";
+    if(/timeout/i.test(msg)) return "업로드 시간초과";
+    return msg||"동기화 오류";
   }
-  function ensureFirebase(){
-    if(fbApp)return true;
+
+  function initFirebase(){
+    if(app) return;
     if(!window.firebase) throw new Error("Firebase SDK 로딩 실패");
-    try{ fbApp=firebase.initializeApp(FIREBASE_CONFIG,"psat-sync-v46"); }
-    catch(err){ try{fbApp=firebase.app("psat-sync-v46");}catch{throw err;} }
-    fbAuth=fbApp.auth(); fbDb=fbApp.database(); return true;
+    try{ app=firebase.initializeApp(FIREBASE_CONFIG,"psat-v47"); }
+    catch(e){ app=firebase.app("psat-v47"); }
+    auth=app.auth();
+    db=app.database();
+    auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
   }
-  async function rows(storeName){ return await getAll(storeName); }
-  function keyFor(id){ return encodeURIComponent(String(id||"")); }
-  async function writeRows(basePath, rowsIn, label){
-    if(!fbUser||!fbDb) throw new Error("먼저 로그인해줘");
-    const ref=fbDb.ref(`${ROOT}/${fbUser.uid}/${basePath}`);
-    const existing=(await ref.once("value")).val()||{};
-    const updates={}; const local=new Set();
-    for(const row of rowsIn||[]){ const k=keyFor(row.id); local.add(k); updates[k]=row; }
-    for(const k of Object.keys(existing)){ if(!local.has(k)) updates[k]=null; }
-    const keys=Object.keys(updates), CHUNK=25;
-    if(!keys.length) return;
-    for(let i=0;i<keys.length;i+=CHUNK){
-      const part={}; for(const k of keys.slice(i,i+CHUNK)) part[k]=updates[k];
-      await ref.update(part);
-      setStatus(`${label} 업로드 중 · ${Math.min(i+CHUNK,keys.length)}/${keys.length}`);
+
+  function keyOf(id){
+    return encodeURIComponent(String(id||""))
+      .replace(/\./g,"%2E").replace(/#/g,"%23").replace(/\$/g,"%24")
+      .replace(/\[/g,"%5B").replace(/\]/g,"%5D").replace(/\//g,"%2F");
+  }
+
+  function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+  async function withTimeout(promise,ms,label){
+    let timer;
+    const timeout=new Promise((_,reject)=>{
+      timer=setTimeout(()=>reject(new Error(`timeout:${label}`)),ms);
+    });
+    try{ return await Promise.race([promise,timeout]); }
+    finally{ clearTimeout(timer); }
+  }
+
+  async function retryWrite(fn,label){
+    let lastErr;
+    for(let attempt=1;attempt<=RETRIES;attempt++){
+      try{
+        return await withTimeout(fn(),WRITE_TIMEOUT_MS,label);
+      }catch(e){
+        lastErr=e;
+        if(attempt<RETRIES){
+          status(`${label} 재시도 ${attempt}/${RETRIES-1}`);
+          await sleep(700*attempt);
+        }
+      }
+    }
+    throw lastErr;
+  }
+
+  function splitText(text){
+    const out=[];
+    for(let i=0;i<text.length;i+=CHUNK_SIZE){
+      out.push(text.slice(i,i+CHUNK_SIZE));
+    }
+    return out.length?out:[""];
+  }
+
+  function rowFingerprint(row){
+    // 서버와 동일 여부를 빠르게 비교하기 위한 가벼운 지문
+    return [
+      String(row?.updatedAt||0),
+      String(row?.lastAnsweredAt||0),
+      String(row?.attempts||0),
+      String(row?.correct||0),
+      String(row?.wrongActive?1:0),
+      String(row?.imageData?.length||0),
+      String(row?.explanationImageData?.length||0),
+      String(row?.annotations?.length||0)
+    ].join(":");
+  }
+
+  async function uploadRowChunked(path,row,index,total){
+    const key=keyOf(row.id);
+    const rowRef=db.ref(`${ROOT}/${user.uid}/${path}/${key}`);
+    const fp=rowFingerprint(row);
+
+    // v47 형식 또는 v46 평문 형식이 이미 같은 내용이면 스킵 → 중간부터 이어올리기 가능
+    const oldSnap=await withTimeout(rowRef.once("value"),WRITE_TIMEOUT_MS,`${index}/${total} 확인`);
+    const old=oldSnap.val();
+
+    if(old){
+      if(old.__v47===1 && old.fingerprint===fp && old.complete===true) return "skip";
+      if(old.id===row.id && rowFingerprint(old)===fp) return "skip";
+    }
+
+    const jsonText=JSON.stringify(row);
+    const chunks=splitText(jsonText);
+
+    // 기존 값 제거 후 메타부터 표시. complete=false인 동안 다른 기기는 적용하지 않음.
+    await retryWrite(
+      ()=>rowRef.set({
+        __v47:1,
+        complete:false,
+        fingerprint:fp,
+        chunkCount:chunks.length,
+        totalChars:jsonText.length,
+        updatedAt:Date.now(),
+        chunks:{}
+      }),
+      `문제 ${index}/${total} 준비`
+    );
+
+    for(let i=0;i<chunks.length;i++){
+      status(`문제 ${index}/${total} · 조각 ${i+1}/${chunks.length}`);
+      await retryWrite(
+        ()=>rowRef.child(`chunks/${i}`).set(chunks[i]),
+        `문제 ${index}/${total} 조각 ${i+1}`
+      );
+    }
+
+    await retryWrite(
+      ()=>rowRef.update({complete:true,finishedAt:Date.now()}),
+      `문제 ${index}/${total} 완료`
+    );
+    return "uploaded";
+  }
+
+  async function removeDeletedRows(path,rows){
+    const ref=db.ref(`${ROOT}/${user.uid}/${path}`);
+    const snap=await withTimeout(ref.once("value"),WRITE_TIMEOUT_MS,`${path} 목록 확인`);
+    const old=snap.val()||{};
+    const keep=new Set(rows.map(r=>keyOf(r.id)));
+    for(const key of Object.keys(old)){
+      if(!keep.has(key)){
+        await retryWrite(()=>ref.child(key).remove(),`${path} 삭제 반영`);
+      }
     }
   }
+
+  async function uploadStore(path,storeName,label){
+    const rows=await getAll(storeName);
+    await removeDeletedRows(path,rows);
+
+    let uploaded=0, skipped=0;
+    for(let i=0;i<rows.length;i++){
+      const row=rows[i];
+      status(`${label} 업로드 중 · ${i+1}/${rows.length}`);
+      const result=await uploadRowChunked(path,row,i+1,rows.length);
+      if(result==="skip") skipped++;
+      else uploaded++;
+    }
+    return {count:rows.length,uploaded,skipped};
+  }
+
   async function pushAll(){
-    if(!fbUser||!fbDb) throw new Error("먼저 로그인해줘");
-    if(applyingRemote) return;
-    setStatus("이 폰 데이터 확인 중...");
-    const problems=await rows(STORES.problems), history=await rows(STORES.history);
-    await writeRows("problems",problems,"문제");
-    await writeRows("history",history,"풀이기록");
-    await fbDb.ref(`${ROOT}/${fbUser.uid}/${META_KEY}`).set({updatedAt:firebase.database.ServerValue.TIMESTAMP,problemCount:problems.length,historyCount:history.length,appVersion:46});
-    setStatus(`클라우드 저장 완료 · ${problems.length}문제`,true);
-    return problems.length;
-  }
-  async function replaceStore(storeName,obj){
-    const arr=obj&&typeof obj==="object"?Object.values(obj).filter(Boolean):[];
-    const db=await openDb();
-    await new Promise((resolve,reject)=>{ const tx=db.transaction(storeName,"readwrite"), store=tx.objectStore(storeName); store.clear(); for(const row of arr)store.put(row); tx.oncomplete=resolve; tx.onerror=()=>reject(tx.error); });
-    return arr.length;
-  }
-  async function pullAll(){
-    if(!fbUser||!fbDb) throw new Error("먼저 로그인해줘");
-    setStatus("클라우드 데이터 받는 중..."); applyingRemote=true;
+    if(!user||!db) throw new Error("먼저 로그인해줘");
+    if(applying) return;
+    if(pushing) {
+      status("이미 업로드 진행 중이야");
+      return;
+    }
+    pushing=true;
     try{
-      const [ps,hs]=await Promise.all([fbDb.ref(`${ROOT}/${fbUser.uid}/problems`).once("value"),fbDb.ref(`${ROOT}/${fbUser.uid}/history`).once("value")]);
-      if(!ps.exists()&&!hs.exists()){ setStatus("클라우드 데이터가 아직 없어"); return false; }
-      const count=await replaceStore(STORES.problems,ps.val()); await replaceStore(STORES.history,hs.val()); await refresh(); setStatus(`동기화됨 · ${count}문제`,true); return true;
-    } finally { applyingRemote=false; }
+      status("이 폰 데이터 확인 중...");
+      const p=await uploadStore("problems",STORES.problems,"문제");
+      const h=await uploadStore("history",STORES.history,"풀이기록");
+
+      await retryWrite(
+        ()=>db.ref(`${ROOT}/${user.uid}/_meta`).set({
+          updatedAt:firebase.database.ServerValue.TIMESTAMP,
+          problemCount:p.count,
+          historyCount:h.count,
+          version:47
+        }),
+        "마지막 저장"
+      );
+      status(`클라우드 저장 완료 · ${p.count}문제`,true);
+      return p;
+    }finally{
+      pushing=false;
+    }
   }
-  function stopListeners(){
-    try{ if(problemRef&&problemHandler)problemRef.off("value",problemHandler); }catch{}
-    try{ if(historyRef&&historyHandler)historyRef.off("value",historyHandler); }catch{}
-    problemRef=historyRef=problemHandler=historyHandler=null;
+
+  function decodeV47Row(value){
+    if(!value) return null;
+    if(value.__v47!==1) return value; // v46 구형 데이터 호환
+    if(value.complete!==true) return null;
+    const count=Number(value.chunkCount||0);
+    const chunks=value.chunks||{};
+    let text="";
+    for(let i=0;i<count;i++){
+      if(typeof chunks[i]!=="string") return null;
+      text+=chunks[i];
+    }
+    try{ return JSON.parse(text); }
+    catch(e){
+      console.warn("v47 row parse failed",e);
+      return null;
+    }
   }
-  function startListeners(){
-    stopListeners(); if(!fbUser||!fbDb)return;
-    let timer=null; const schedule=()=>{ if(applyingRemote)return; clearTimeout(timer); timer=setTimeout(()=>pullAll().catch(err=>setStatus(`동기화 실패 · ${friendlyError(err)}`,false,true)),400); };
-    problemRef=fbDb.ref(`${ROOT}/${fbUser.uid}/problems`); historyRef=fbDb.ref(`${ROOT}/${fbUser.uid}/history`);
-    problemHandler=()=>schedule(); historyHandler=()=>schedule();
-    problemRef.on("value",problemHandler); historyRef.on("value",historyHandler);
+
+  function decodeCollection(obj){
+    if(!obj||typeof obj!=="object") return [];
+    const rows=[];
+    for(const value of Object.values(obj)){
+      const row=decodeV47Row(value);
+      if(row&&row.id) rows.push(row);
+    }
+    return rows;
   }
-  function schedulePush(){ if(!fbUser||applyingRemote)return; clearTimeout(pushTimer); pushTimer=setTimeout(()=>pushAll().catch(err=>setStatus(`자동 업로드 실패 · ${friendlyError(err)}`,false,true)),1000); }
-  async function afterLogin(user){
-    fbUser=user; localStorage.setItem(LAST_EMAIL_KEY,user.email||""); if(q("firebaseEmailV45")&&user.email)q("firebaseEmailV45").value=user.email; q("firebaseLogoutBtnV45")?.classList.remove("hidden");
-    setStatus(`로그인됨 · ${user.email||""}`,true);
-    const meta=await fbDb.ref(`${ROOT}/${user.uid}/${META_KEY}`).once("value");
-    if(meta.exists()) await pullAll(); else await pushAll();
-    startListeners();
+
+  async function replaceStore(storeName,rows){
+    const idb=await openDb();
+    await new Promise((resolve,reject)=>{
+      const tx=idb.transaction(storeName,"readwrite");
+      const st=tx.objectStore(storeName);
+      st.clear();
+      for(const row of rows) st.put(row);
+      tx.oncomplete=resolve;
+      tx.onerror=()=>reject(tx.error);
+    });
   }
-  async function login(email,password,signup=false){ ensureFirebase(); const cred=signup?await fbAuth.createUserWithEmailAndPassword(email,password):await fbAuth.signInWithEmailAndPassword(email,password); await afterLogin(cred.user); }
-  async function logout(){ stopListeners(); if(fbAuth)await fbAuth.signOut(); fbUser=null; q("firebaseLogoutBtnV45")?.classList.add("hidden"); setStatus("로그아웃됨"); }
-  function bindUi(){
-    if(uiBound)return; uiBound=true;
-    const details=document.querySelector("#firebaseSyncCardV45 .sync-details-v45"); if(details) details.innerHTML='<summary>Firebase 설정 완료</summary><p class="hint">v46에는 psat-sync 설정이 내장되어 있어 폰/태블릿에서 다시 붙여넣을 필요가 없어.</p>';
-    if(q("firebaseEmailV45"))q("firebaseEmailV45").value=localStorage.getItem(LAST_EMAIL_KEY)||q("firebaseEmailV45").value||"";
-    q("firebaseSignupBtnV45")?.addEventListener("click",async()=>{try{const e=q("firebaseEmailV45")?.value.trim()||"",p=q("firebasePasswordV45")?.value||""; if(!e||p.length<6)throw new Error("이메일과 6자 이상 비밀번호를 입력해줘"); setStatus("계정 만드는 중..."); await login(e,p,true); showToast("계정 생성 · 동기화 시작");}catch(err){const m=friendlyError(err);setStatus(`계정 생성 실패 · ${m}`,false,true);showToast(m);}});
-    q("firebaseLoginBtnV45")?.addEventListener("click",async()=>{try{const e=q("firebaseEmailV45")?.value.trim()||"",p=q("firebasePasswordV45")?.value||""; if(!e||!p)throw new Error("이메일/비밀번호를 입력해줘"); setStatus("로그인 중..."); await login(e,p,false); showToast("실시간 동기화 시작");}catch(err){const m=friendlyError(err);setStatus(`로그인 실패 · ${m}`,false,true);showToast(m);}});
-    q("firebaseLogoutBtnV45")?.addEventListener("click",()=>logout().catch(err=>setStatus(friendlyError(err),false,true)));
-    q("firebasePushBtnV45")?.addEventListener("click",async()=>{try{setStatus("이 폰 데이터 올리는 중..."); await pushAll(); showToast("폰 데이터 업로드 완료");}catch(err){const m=friendlyError(err);setStatus(`업로드 실패 · ${m}`,false,true);showToast(m);}});
-    q("firebasePullBtnV45")?.addEventListener("click",async()=>{try{await pullAll();showToast("클라우드 데이터 받기 완료");}catch(err){const m=friendlyError(err);setStatus(`받기 실패 · ${m}`,false,true);showToast(m);}});
+
+  async function pullAll(){
+    if(!user||!db) throw new Error("먼저 로그인해줘");
+    if(pushing) return false; // 업로드 중 자기 변경 이벤트로 내려받기 방지
+    applying=true;
+    try{
+      status("클라우드 데이터 받는 중...");
+      const [ps,hs]=await Promise.all([
+        withTimeout(db.ref(`${ROOT}/${user.uid}/problems`).once("value"),WRITE_TIMEOUT_MS,"문제 받기"),
+        withTimeout(db.ref(`${ROOT}/${user.uid}/history`).once("value"),WRITE_TIMEOUT_MS,"기록 받기")
+      ]);
+      if(!ps.exists()&&!hs.exists()){
+        status("클라우드가 비어 있어");
+        return false;
+      }
+      const pRows=decodeCollection(ps.val());
+      const hRows=decodeCollection(hs.val());
+      await replaceStore(STORES.problems,pRows);
+      await replaceStore(STORES.history,hRows);
+      await refresh();
+      status(`동기화됨 · ${pRows.length}문제`,true);
+      return true;
+    }finally{
+      applying=false;
+    }
   }
-  function watchAuth(){
-    if(authWatching)return; authWatching=true;
-    try{ ensureFirebase(); fbAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{}); fbAuth.onAuthStateChanged(user=>{ if(!user){fbUser=null;setStatus("Firebase 연결됨 · 로그인 필요");return;} if(fbUser?.uid===user.uid)return; afterLogin(user).catch(err=>setStatus(`자동 동기화 실패 · ${friendlyError(err)}`,false,true)); }); }
-    catch(err){ setStatus(`Firebase 초기화 실패 · ${friendlyError(err)}`,false,true); }
+
+  function stopRemote(){
+    if(problemsRef) problemsRef.off();
+    if(historyRef) historyRef.off();
+    problemsRef=historyRef=null;
   }
+
+  function startRemote(){
+    stopRemote();
+    if(!user||!db) return;
+    problemsRef=db.ref(`${ROOT}/${user.uid}/problems`);
+    historyRef=db.ref(`${ROOT}/${user.uid}/history`);
+    const changed=()=>{
+      if(applying||pushing) return;
+      clearTimeout(remoteTimer);
+      remoteTimer=setTimeout(()=>{
+        pullAll().catch(e=>status(`자동 동기화 실패 · ${niceError(e)}`,false,true));
+      },800);
+    };
+    problemsRef.on("value",changed);
+    historyRef.on("value",changed);
+  }
+
+  async function afterLogin(u){
+    user=u;
+    localStorage.setItem(LAST_EMAIL_KEY,u.email||"");
+    if(el("firebaseEmailV45")&&u.email) el("firebaseEmailV45").value=u.email;
+    el("firebaseLogoutBtnV45")?.classList.remove("hidden");
+    status(`로그인됨 · ${u.email||""}`,true);
+
+    const meta=await withTimeout(
+      db.ref(`${ROOT}/${u.uid}/_meta`).once("value"),
+      WRITE_TIMEOUT_MS,
+      "클라우드 확인"
+    );
+
+    // v46 업로드가 중간에 멈췄어도 로컬 데이터를 기준으로 이어서 올린다.
+    // meta가 v47이면 정상 클라우드로 보고 먼저 내려받는다.
+    const m=meta.val();
+    if(m&&Number(m.version)>=47){
+      await pullAll();
+    }else{
+      await pushAll();
+    }
+    startRemote();
+  }
+
+  function schedulePush(){
+    if(!user||applying||pushing) return;
+    clearTimeout(pushTimer);
+    pushTimer=setTimeout(()=>{
+      pushAll().catch(e=>status(`자동 업로드 실패 · ${niceError(e)}`,false,true));
+    },1200);
+  }
+
+  function bindUI(){
+    if(uiBound) return;
+    uiBound=true;
+
+    const email=el("firebaseEmailV45");
+    if(email) email.value=localStorage.getItem(LAST_EMAIL_KEY)||email.value||"";
+
+    el("firebaseSignupBtnV45")?.addEventListener("click",async()=>{
+      try{
+        const e=el("firebaseEmailV45")?.value.trim()||"";
+        const p=el("firebasePasswordV45")?.value||"";
+        if(!e||p.length<6) throw new Error("이메일과 6자 이상 비밀번호 입력");
+        initFirebase();
+        status("계정 만드는 중...");
+        const cred=await auth.createUserWithEmailAndPassword(e,p);
+        await afterLogin(cred.user);
+      }catch(err){
+        const m=niceError(err); status(`계정 생성 실패 · ${m}`,false,true); showToast(m);
+      }
+    });
+
+    el("firebaseLoginBtnV45")?.addEventListener("click",async()=>{
+      try{
+        const e=el("firebaseEmailV45")?.value.trim()||"";
+        const p=el("firebasePasswordV45")?.value||"";
+        if(!e||!p) throw new Error("이메일/비밀번호 입력");
+        initFirebase();
+        status("로그인 중...");
+        const cred=await auth.signInWithEmailAndPassword(e,p);
+        await afterLogin(cred.user);
+      }catch(err){
+        const m=niceError(err); status(`로그인 실패 · ${m}`,false,true); showToast(m);
+      }
+    });
+
+    el("firebaseLogoutBtnV45")?.addEventListener("click",async()=>{
+      try{
+        stopRemote();
+        if(auth) await auth.signOut();
+        user=null;
+        status("로그아웃됨");
+      }catch(e){ status(niceError(e),false,true); }
+    });
+
+    el("firebasePushBtnV45")?.addEventListener("click",async()=>{
+      try{
+        await pushAll();
+        showToast("폰 데이터 업로드 완료");
+      }catch(err){
+        const m=niceError(err);
+        status(`업로드 실패 · ${m}`,false,true);
+        showToast(m);
+      }
+    });
+
+    el("firebasePullBtnV45")?.addEventListener("click",async()=>{
+      try{
+        await pullAll();
+        showToast("클라우드 데이터 받기 완료");
+      }catch(err){
+        const m=niceError(err);
+        status(`받기 실패 · ${m}`,false,true);
+        showToast(m);
+      }
+    });
+  }
+
   const oldSchedule=typeof scheduleSyncForLocalChange==="function"?scheduleSyncForLocalChange:null;
-  scheduleSyncForLocalChange=function(storeName){ try{oldSchedule?.(storeName);}catch{} schedulePush(); };
-  window.addEventListener("online",()=>{if(fbUser)schedulePush();});
-  setTimeout(()=>{bindUi();watchAuth();},350);
+  scheduleSyncForLocalChange=function(storeName){
+    try{ oldSchedule?.(storeName); }catch{}
+    schedulePush();
+  };
+
+  function start(){
+    bindUI();
+    try{
+      initFirebase();
+      auth.onAuthStateChanged(u=>{
+        if(!u){
+          user=null;
+          status("Firebase 연결됨 · 로그인 필요");
+          return;
+        }
+        if(user?.uid===u.uid) return;
+        afterLogin(u).catch(e=>status(`자동 동기화 실패 · ${niceError(e)}`,false,true));
+      });
+    }catch(e){
+      status(`Firebase 초기화 실패 · ${niceError(e)}`,false,true);
+    }
+  }
+
+  window.addEventListener("online",()=>{ if(user) schedulePush(); });
+  setTimeout(start,400);
 })();

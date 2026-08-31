@@ -7,7 +7,7 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=45" />
+  <link rel="stylesheet" href="styles.css?v=47" />
 </head>
 <body>
   <header class="app-header">
@@ -323,11 +323,8 @@
         <p id="firebaseSyncStatusV45" class="hint">Firebase 설정 전</p>
 
         <details class="sync-details-v45">
-          <summary>처음 한 번만: Firebase 설정</summary>
-          <label>firebaseConfig
-            <textarea id="firebaseConfigInputV45" rows="8" placeholder='Firebase의 firebaseConfig = { ... } 부분을 붙여넣어'></textarea>
-          </label>
-          <button id="saveFirebaseConfigBtnV45" class="secondary" type="button">설정 저장</button>
+          <summary>Firebase 설정 완료</summary>
+          <p class="hint">v46에는 psat-sync Firebase 설정이 내장되어 있어 다시 붙여넣을 필요가 없어.</p>
         </details>
 
         <div class="grid two sync-auth-grid-v45">
@@ -361,6 +358,6 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
-  <script src="app.js?v=45"></script>
+  <script src="app.js?v=47"></script>
 </body>
 </html>

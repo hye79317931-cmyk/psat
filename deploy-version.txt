@@ -1,1 +1,2 @@
-PSAT v46 Firebase sync rebuild\ncreated: 2026-08-31T02:53:10.374107\n
+PSAT v47 chunked resumable Firebase sync
+created: 2026-08-31T03:08:56.567894
