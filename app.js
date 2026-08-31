@@ -5493,3 +5493,178 @@ window.psatManualNextLeftV44 = true;
     moveOverlayToFullscreenHostV50();
   });
 })();
+
+
+/* === v51: 중단/나가기 안정화 - 전체화면 해제 후 결과창 표시 === */
+(function psatExitSummaryStableV51() {
+  let openingV51 = false;
+  let modalOpenedAtV51 = 0;
+  let elapsedAtOpenV51 = 0;
+  let timerWasRunningV51 = false;
+
+  const $v51 = id => document.getElementById(id);
+
+  function calcElapsedV51() {
+    const solved = Math.max(0, Number(state.session?.solveElapsedMsV49 || 0));
+    if (!state.current || state.checked || !state.questionStart) return solved;
+    return solved + Math.max(0, Date.now() - state.questionStart);
+  }
+
+  function fillSummaryV51() {
+    const answered = Math.max(0, Number(state.session?.answered || 0));
+    const wrong = Math.max(
+      0,
+      Array.isArray(state.session?.wrongIds)
+        ? state.session.wrongIds.length
+        : answered - Number(state.session?.correct || 0)
+    );
+
+    if ($v51("exitAnsweredV49")) $v51("exitAnsweredV49").textContent = `${answered}문제`;
+    if ($v51("exitWrongV49")) $v51("exitWrongV49").textContent = `${wrong}문제`;
+    if ($v51("exitElapsedV49")) $v51("exitElapsedV49").textContent = formatLongTime(elapsedAtOpenV51);
+  }
+
+  function moveOverlayToBodyV51() {
+    const overlay=$v51("exitSummaryOverlayV49");
+    if (!overlay) return null;
+    if (overlay.parentElement !== document.body) document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  async function openExitSummaryV51() {
+    if (openingV51) return;
+    if (!state.current || !state.session) {
+      await pauseCurrentSession();
+      return;
+    }
+
+    openingV51 = true;
+
+    try {
+      timerWasRunningV51 = !!state.timerId;
+      elapsedAtOpenV51 = calcElapsedV51();
+      modalOpenedAtV51 = Date.now();
+
+      // 결과창을 보고 있는 시간은 풀이시간에 포함하지 않는다.
+      stopTimer();
+
+      // 핵심: 전체화면 내부에 팝업을 띄우지 않고 먼저 전체화면을 해제한다.
+      if (document.fullscreenElement) {
+        try {
+          await document.exitFullscreen();
+        } catch {}
+        // Android Chrome에서 fullscreenchange 반영 대기
+        await new Promise(resolve => setTimeout(resolve, 180));
+      }
+
+      const overlay = moveOverlayToBodyV51();
+      if (!overlay) return;
+
+      fillSummaryV51();
+      overlay.classList.remove("hidden");
+      overlay.style.display = "flex";
+      document.body.classList.add("exit-summary-open-v51");
+    } finally {
+      openingV51 = false;
+    }
+  }
+
+  function hideModalV51() {
+    const overlay=$v51("exitSummaryOverlayV49");
+    if (overlay) {
+      overlay.classList.add("hidden");
+      overlay.style.removeProperty("display");
+    }
+    document.body.classList.remove("exit-summary-open-v51");
+  }
+
+  async function continueSolveV51() {
+    const now=Date.now();
+    const pauseMs=modalOpenedAtV51 ? Math.max(0, now-modalOpenedAtV51) : 0;
+
+    hideModalV51();
+
+    if (state.current && !state.checked && state.questionStart) {
+      state.questionStart += pauseMs;
+    }
+    if (state.session?.endAt) {
+      state.session.endAt += pauseMs;
+    }
+
+    modalOpenedAtV51=0;
+
+    if (state.current && !state.checked && timerWasRunningV51) {
+      updateTimers();
+      startTimer();
+    }
+
+    // 계속 풀기 선택 시 다시 문제풀이 전체화면으로 진입
+    try {
+      await enterSolveFullscreen();
+    } catch {}
+  }
+
+  async function confirmExitV51() {
+    const now=Date.now();
+    const solved=Math.max(0, Number(state.session?.solveElapsedMsV49 || 0));
+    const currentPart=Math.max(0, elapsedAtOpenV51-solved);
+
+    hideModalV51();
+
+    // pauseCurrentSession의 snapshot 시간 계산이 팝업 대기시간을 포함하지 않도록 보정
+    if (state.current && !state.checked && state.questionStart) {
+      state.questionStart = now-currentPart;
+    } else if (state.current && state.checked) {
+      state.questionStart = now;
+    }
+
+    if (state.session) {
+      state.session.startedAt = now-elapsedAtOpenV51;
+      if (state.session.endAt && modalOpenedAtV51) {
+        state.session.endAt += Math.max(0, now-modalOpenedAtV51);
+      }
+    }
+
+    modalOpenedAtV51=0;
+    await pauseCurrentSession();
+  }
+
+  // v49/v50의 기존 핸들러보다 가장 먼저 가로채기
+  window.addEventListener("pointerdown", event => {
+    const btn=event.target?.closest?.("#exitSolveBtn");
+    if (!btn) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    openExitSummaryV51();
+  }, true);
+
+  // click도 보조로 처리. pointerdown이 처리된 경우 openingV51가 중복 방지.
+  window.addEventListener("click", event => {
+    const btn=event.target?.closest?.("#exitSolveBtn");
+    if (!btn) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    openExitSummaryV51();
+  }, true);
+
+  document.addEventListener("click", event => {
+    const cont=event.target?.closest?.("#continueSolveV49");
+    if (cont) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      continueSolveV51();
+      return;
+    }
+
+    const exit=event.target?.closest?.("#confirmExitSolveV49");
+    if (exit) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      confirmExitV51();
+    }
+  }, true);
+})();

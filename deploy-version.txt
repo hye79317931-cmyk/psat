@@ -1,2 +1,2 @@
-PSAT v50 fullscreen exit summary fix
-created: 2026-08-31T12:44:50.280759
+PSAT v51 stable exit summary after fullscreen exit
+created: 2026-08-31T12:54:32.898472

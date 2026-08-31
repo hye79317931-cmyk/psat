@@ -1904,3 +1904,16 @@ body.psat-exp-v40-open {
   height: 100vh !important;
   z-index: 2147483647 !important;
 }
+
+
+/* === v51 중단 결과창 안정화 === */
+body.exit-summary-open-v51 {
+  overflow: hidden !important;
+}
+body > #exitSummaryOverlayV49 {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 2147483647 !important;
+}
