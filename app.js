@@ -4898,3 +4898,311 @@ setTimeout(() => {
 
 /* === v44: 채점 후 왼쪽 다음 문제 버튼 === */
 window.psatManualNextLeftV44 = true;
+
+
+/* === v45: 폰/태블릿 Firebase Realtime Database 동기화 === */
+(function psatFirebaseSyncV45() {
+  const CONFIG_KEY = "psat-firebase-config-v45";
+  const LAST_EMAIL_KEY = "psat-firebase-email-v45";
+  const SYNC_ROOT = "psatData";
+  const SYNC_VERSION = 45;
+
+  let fbApp = null;
+  let fbAuth = null;
+  let fbDb = null;
+  let fbUser = null;
+  let remoteRef = null;
+  let remoteHandler = null;
+  let applyingRemote = false;
+  let pushTimer = null;
+  let started = false;
+
+  function v45$(id) { return document.getElementById(id); }
+
+  function setStatus(message, ok = false) {
+    const el = v45$("firebaseSyncStatusV45");
+    if (!el) return;
+    el.textContent = message;
+    el.classList.toggle("sync-ok-v45", !!ok);
+  }
+
+  function parseFirebaseConfig(raw) {
+    let text = String(raw || "").trim();
+    if (!text) throw new Error("Firebase 설정을 붙여넣어줘");
+
+    // allow full source: const firebaseConfig = { ... };
+    const braceStart = text.indexOf("{");
+    const braceEnd = text.lastIndexOf("}");
+    if (braceStart >= 0 && braceEnd > braceStart) {
+      text = text.slice(braceStart, braceEnd + 1);
+    }
+
+    // convert JS object notation to JSON where possible
+    try { return JSON.parse(text); } catch {}
+
+    // Parse common Firebase config lines safely, without eval
+    const keys = [
+      "apiKey","authDomain","databaseURL","projectId",
+      "storageBucket","messagingSenderId","appId","measurementId"
+    ];
+    const out = {};
+    for (const key of keys) {
+      const rx = new RegExp(key + "\\s*:\\s*[\"']([^\"']+)[\"']");
+      const m = text.match(rx);
+      if (m) out[key] = m[1];
+    }
+    if (!out.apiKey || !out.authDomain || !out.projectId) {
+      throw new Error("firebaseConfig 형식을 확인해줘");
+    }
+    return out;
+  }
+
+  function readConfig() {
+    try {
+      return JSON.parse(localStorage.getItem(CONFIG_KEY) || "null");
+    } catch {
+      return null;
+    }
+  }
+
+  function saveConfig(config) {
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+  }
+
+  function ensureFirebase(config) {
+    if (!window.firebase) throw new Error("Firebase SDK 로딩 실패");
+    if (!config?.databaseURL) throw new Error("Realtime Database 만든 뒤 databaseURL이 있는 설정이 필요해");
+
+    if (fbApp) {
+      try { fbApp.delete(); } catch {}
+      fbApp = null;
+    }
+
+    const appName = "psat-v45-" + Date.now();
+    fbApp = firebase.initializeApp(config, appName);
+    fbAuth = fbApp.auth();
+    fbDb = fbApp.database();
+    return true;
+  }
+
+  async function exportLocalDataV45() {
+    const problems = await getAll(STORES.problems);
+    const history = await getAll(STORES.history);
+    return {
+      version: SYNC_VERSION,
+      updatedAt: Date.now(),
+      problems,
+      history
+    };
+  }
+
+  async function clearAndPut(storeName, rows) {
+    const db = await openDb();
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction(storeName, "readwrite");
+      const store = transaction.objectStore(storeName);
+      store.clear();
+      for (const row of rows || []) store.put(row);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+  }
+
+  async function applyRemoteDataV45(payload) {
+    if (!payload || applyingRemote) return;
+    applyingRemote = true;
+    try {
+      const problems = Array.isArray(payload.problems) ? payload.problems : [];
+      const history = Array.isArray(payload.history) ? payload.history : [];
+      await clearAndPut(STORES.problems, problems);
+      await clearAndPut(STORES.history, history);
+      await refresh();
+      setStatus(`동기화됨 · ${problems.length}문제`, true);
+    } finally {
+      applyingRemote = false;
+    }
+  }
+
+  async function pushNowV45() {
+    if (!fbUser || !fbDb || applyingRemote) return;
+    const data = await exportLocalDataV45();
+    await fbDb.ref(`${SYNC_ROOT}/${fbUser.uid}`).set(data);
+    setStatus(`클라우드 저장 완료 · ${data.problems.length}문제`, true);
+  }
+
+  function schedulePushV45() {
+    if (!fbUser || applyingRemote) return;
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(() => {
+      pushNowV45().catch(err => {
+        console.warn("v45 push failed", err);
+        setStatus("자동 동기화 실패 · 인터넷/Firebase 설정 확인");
+      });
+    }, 700);
+  }
+
+  async function pullNowV45() {
+    if (!fbUser || !fbDb) throw new Error("먼저 로그인해줘");
+    const snap = await fbDb.ref(`${SYNC_ROOT}/${fbUser.uid}`).once("value");
+    const payload = snap.val();
+    if (!payload) {
+      setStatus("클라우드 데이터가 아직 없어");
+      return false;
+    }
+    await applyRemoteDataV45(payload);
+    return true;
+  }
+
+  function stopRemoteListener() {
+    if (remoteRef && remoteHandler) {
+      try { remoteRef.off("value", remoteHandler); } catch {}
+    }
+    remoteRef = null;
+    remoteHandler = null;
+  }
+
+  function startRemoteListener() {
+    stopRemoteListener();
+    if (!fbUser || !fbDb) return;
+    remoteRef = fbDb.ref(`${SYNC_ROOT}/${fbUser.uid}`);
+    remoteHandler = snap => {
+      const payload = snap.val();
+      if (!payload) return;
+      applyRemoteDataV45(payload).catch(err => {
+        console.warn("v45 remote apply failed", err);
+      });
+    };
+    remoteRef.on("value", remoteHandler);
+  }
+
+  async function loginWith(email, password, signup = false) {
+    const config = readConfig();
+    if (!config) throw new Error("Firebase 설정을 먼저 저장해줘");
+    ensureFirebase(config);
+
+    const credential = signup
+      ? await fbAuth.createUserWithEmailAndPassword(email, password)
+      : await fbAuth.signInWithEmailAndPassword(email, password);
+
+    fbUser = credential.user;
+    localStorage.setItem(LAST_EMAIL_KEY, email);
+
+    v45$("firebaseLogoutBtnV45")?.classList.remove("hidden");
+    setStatus(`로그인됨 · ${fbUser.email}`, true);
+
+    // If cloud empty, upload current device. Otherwise receive cloud first.
+    const snap = await fbDb.ref(`${SYNC_ROOT}/${fbUser.uid}`).once("value");
+    if (snap.exists()) {
+      await applyRemoteDataV45(snap.val());
+    } else {
+      await pushNowV45();
+    }
+    startRemoteListener();
+  }
+
+  async function logoutV45() {
+    stopRemoteListener();
+    if (fbAuth) await fbAuth.signOut();
+    fbUser = null;
+    v45$("firebaseLogoutBtnV45")?.classList.add("hidden");
+    setStatus("로그아웃됨");
+  }
+
+  function bindUi() {
+    if (started) return;
+    started = true;
+
+    const configInput = v45$("firebaseConfigInputV45");
+    const saved = readConfig();
+    if (configInput && saved) {
+      configInput.value = JSON.stringify(saved, null, 2);
+      setStatus(saved.databaseURL ? "Firebase 설정 저장됨 · 로그인 필요" : "Realtime Database 설정값 필요");
+    }
+
+    const emailInput = v45$("firebaseEmailV45");
+    if (emailInput) emailInput.value = localStorage.getItem(LAST_EMAIL_KEY) || "";
+
+    v45$("saveFirebaseConfigBtnV45")?.addEventListener("click", () => {
+      try {
+        const config = parseFirebaseConfig(configInput?.value || "");
+        saveConfig(config);
+        setStatus(config.databaseURL ? "Firebase 설정 저장됨 · 로그인해줘" : "설정 저장됨 · databaseURL이 아직 없어");
+        showToast("Firebase 설정 저장했어");
+      } catch (err) {
+        showToast(err.message || "Firebase 설정 오류");
+      }
+    });
+
+    v45$("firebaseSignupBtnV45")?.addEventListener("click", async () => {
+      try {
+        const email = v45$("firebaseEmailV45")?.value.trim() || "";
+        const password = v45$("firebasePasswordV45")?.value || "";
+        if (!email || password.length < 6) throw new Error("이메일과 6자 이상 비밀번호를 입력해줘");
+        setStatus("계정 만드는 중...");
+        await loginWith(email, password, true);
+        showToast("동기화 계정 만들었어");
+      } catch (err) {
+        console.warn(err);
+        showToast(err.message || "계정 만들기 실패");
+        setStatus("계정 만들기 실패");
+      }
+    });
+
+    v45$("firebaseLoginBtnV45")?.addEventListener("click", async () => {
+      try {
+        const email = v45$("firebaseEmailV45")?.value.trim() || "";
+        const password = v45$("firebasePasswordV45")?.value || "";
+        if (!email || !password) throw new Error("이메일/비밀번호를 입력해줘");
+        setStatus("로그인 중...");
+        await loginWith(email, password, false);
+        showToast("실시간 동기화 시작");
+      } catch (err) {
+        console.warn(err);
+        showToast(err.message || "로그인 실패");
+        setStatus("로그인 실패");
+      }
+    });
+
+    v45$("firebaseLogoutBtnV45")?.addEventListener("click", () => {
+      logoutV45().catch(console.warn);
+    });
+
+    v45$("firebasePushBtnV45")?.addEventListener("click", async () => {
+      try {
+        if (!fbUser) throw new Error("먼저 로그인해줘");
+        await pushNowV45();
+        showToast("이 기기 데이터를 올렸어");
+      } catch (err) {
+        showToast(err.message || "업로드 실패");
+      }
+    });
+
+    v45$("firebasePullBtnV45")?.addEventListener("click", async () => {
+      try {
+        if (!fbUser) throw new Error("먼저 로그인해줘");
+        await pullNowV45();
+        showToast("클라우드 데이터를 받았어");
+      } catch (err) {
+        showToast(err.message || "불러오기 실패");
+      }
+    });
+  }
+
+  // Hook existing local mutation scheduler. v44 had old sync stubs; keep local flow, add Firebase push.
+  const originalScheduleSyncV45 = typeof scheduleSyncForLocalChange === "function"
+    ? scheduleSyncForLocalChange
+    : null;
+
+  scheduleSyncForLocalChange = function(storeName) {
+    try { originalScheduleSyncV45?.(storeName); } catch {}
+    schedulePushV45();
+  };
+
+  // Also push after refresh-triggering local operations that may bypass put wrapper.
+  window.addEventListener("online", () => {
+    if (fbUser) schedulePushV45();
+  });
+
+  setTimeout(bindUi, 400);
+  setTimeout(bindUi, 1200);
+})();

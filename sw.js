@@ -1,14 +1,14 @@
 'use strict';
 
-const CACHE_NAME = 'psat-random-note-v44';
+const CACHE_NAME = 'psat-random-note-v45';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css?v=44',
-  './app.js?v=44',
+  './styles.css?v=45',
+  './app.js?v=45',
   './manifest.webmanifest',
-  './assets/icon-192.png',
-  './assets/icon-512.png'
+  './icon-192.png',
+  './icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {

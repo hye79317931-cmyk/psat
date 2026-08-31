@@ -1,2 +1,2 @@
-PSAT v44 manual next button left
-created: 2026-08-27T08:50:14.557717
+PSAT v45 Firebase phone-tablet sync flat package
+created: 2026-08-31T01:35:51.226703

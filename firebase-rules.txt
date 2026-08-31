@@ -1,0 +1,10 @@
+{
+  "rules": {
+    "psatData": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
+      }
+    }
+  }
+}

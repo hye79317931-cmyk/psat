@@ -1786,3 +1786,32 @@ body.psat-exp-v40-open {
     font-size: 12px !important;
   }
 }
+
+
+/* === v45 Firebase 실시간 동기화 === */
+#firebaseSyncCardV45 textarea {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.sync-details-v45 {
+  margin: 10px 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,.04);
+}
+.sync-details-v45 summary {
+  cursor: pointer;
+  font-weight: 900;
+}
+.sync-auth-grid-v45 {
+  margin-top: 10px;
+}
+#firebaseSyncStatusV45.sync-ok-v45 {
+  color: var(--accent);
+  font-weight: 900;
+}

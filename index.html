@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#121826" />
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="apple-touch-icon" href="assets/icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=44" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="stylesheet" href="styles.css?v=45" />
 </head>
 <body>
   <header class="app-header">
@@ -317,6 +317,38 @@
         </div>
         <p class="hint">폰 교체, 브라우저 데이터 삭제 전에 반드시 백업해. 복원은 같은 앱에서 JSON 파일을 선택하면 됩니다.</p>
       </section>
+      
+      <section class="card" id="firebaseSyncCardV45">
+        <h2>폰 · 태블릿 실시간 동기화</h2>
+        <p id="firebaseSyncStatusV45" class="hint">Firebase 설정 전</p>
+
+        <details class="sync-details-v45">
+          <summary>처음 한 번만: Firebase 설정</summary>
+          <label>firebaseConfig
+            <textarea id="firebaseConfigInputV45" rows="8" placeholder='Firebase의 firebaseConfig = { ... } 부분을 붙여넣어'></textarea>
+          </label>
+          <button id="saveFirebaseConfigBtnV45" class="secondary" type="button">설정 저장</button>
+        </details>
+
+        <div class="grid two sync-auth-grid-v45">
+          <label>이메일
+            <input id="firebaseEmailV45" type="email" autocomplete="username" placeholder="동기화 계정 이메일">
+          </label>
+          <label>비밀번호
+            <input id="firebasePasswordV45" type="password" autocomplete="current-password" placeholder="6자 이상">
+          </label>
+        </div>
+
+        <div class="row wrap">
+          <button id="firebaseSignupBtnV45" class="secondary" type="button">처음 계정 만들기</button>
+          <button id="firebaseLoginBtnV45" type="button">로그인 · 동기화 시작</button>
+          <button id="firebaseLogoutBtnV45" class="secondary hidden" type="button">로그아웃</button>
+          <button id="firebasePushBtnV45" class="secondary" type="button">이 폰 데이터 올리기</button>
+          <button id="firebasePullBtnV45" class="secondary" type="button">클라우드 데이터 받기</button>
+        </div>
+        <p class="hint">같은 Firebase 설정 + 같은 이메일 계정으로 로그인한 폰과 태블릿만 같은 데이터를 사용해.</p>
+      </section>
+
       <section class="card danger-zone">
         <h2>초기화</h2>
         <button id="wipeBtn" class="danger" type="button">전체 데이터 삭제</button>
@@ -325,6 +357,10 @@
   </main>
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-  <script src="app.js?v=44"></script>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
+  <script src="app.js?v=45"></script>
 </body>
 </html>
