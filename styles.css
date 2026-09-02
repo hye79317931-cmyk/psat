@@ -1917,3 +1917,56 @@ body > #exitSummaryOverlayV49 {
   height: 100vh !important;
   z-index: 2147483647 !important;
 }
+
+
+/* === v52 왼쪽 풀이 진행 표시 === */
+#leftProgressV52{
+  display:none;
+}
+
+#solvePanel.fullscreen-solve #leftProgressV52{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  width:100%;
+  min-height:38px;
+  margin:2px 0 3px;
+  padding:4px 2px;
+  border:1px solid rgba(255,255,255,.18);
+  border-radius:10px;
+  background:rgba(15,23,42,.52);
+  color:#f8fafc;
+  font-size:9px;
+  line-height:1.25;
+  box-sizing:border-box;
+  white-space:nowrap;
+}
+
+#solvePanel.fullscreen-solve #leftProgressV52.hidden{
+  display:none!important;
+}
+
+#solvePanel.fullscreen-solve #leftProgressV52 strong{
+  font-size:11px;
+  font-weight:900;
+}
+
+@media (max-height:640px){
+  #solvePanel.fullscreen-solve #leftProgressV52{
+    min-height:31px;
+    padding:2px 1px;
+    font-size:8px;
+  }
+  #solvePanel.fullscreen-solve #leftProgressV52 strong{
+    font-size:9px;
+  }
+}
+
+/* v52: 중단/나가기 버튼은 항상 터치 우선 */
+#solvePanel.fullscreen-solve #exitSolveBtn{
+  position:relative!important;
+  z-index:2147482000!important;
+  pointer-events:auto!important;
+  touch-action:manipulation!important;
+}

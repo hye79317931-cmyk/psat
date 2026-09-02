@@ -7,7 +7,7 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=51" />
+  <link rel="stylesheet" href="styles.css?v=52" />
 </head>
 <body>
   <header class="app-header">
@@ -105,6 +105,10 @@
           <span id="zoomLabel" class="badge">100%</span>
           <button id="zoomInBtn" class="secondary" type="button">＋</button>
           <button id="fitZoomBtn" class="secondary" type="button">맞춤</button>
+          <div id="leftProgressV52" class="left-progress-v52" aria-label="풀이 진행">
+            <span>푼 <strong id="leftSolvedV52">0</strong></span>
+            <span>남음 <strong id="leftRemainingV52">0</strong></span>
+          </div>
           <span class="tool-help">손가락: 이동/확대 · 스타일러스/마우스: 필기</span>
         </div>
 
@@ -358,7 +362,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
-  <script src="app.js?v=51"></script>
+  <script src="app.js?v=52"></script>
 
   <div id="exitSummaryOverlayV49" class="exit-summary-overlay-v49 hidden" role="dialog" aria-modal="true" aria-labelledby="exitSummaryTitleV49">
     <div class="exit-summary-card-v49">
