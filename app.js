@@ -5349,9 +5349,12 @@ window.psatManualNextLeftV44 = true;
       const el=overlay();
       if(!el) return;
 
+      raiseExitButtonsV54();
       fillSummary();
       el.classList.remove("hidden");
       el.style.display="flex";
+      el.style.setProperty("pointer-events","auto","important");
+      el.style.setProperty("z-index","2147483647","important");
       document.body.classList.add("exit-summary-open-v51");
     }finally{
       opening=false;
@@ -5434,6 +5437,114 @@ window.psatManualNextLeftV44 = true;
 
   
 
+
+  /*
+    v54:
+    Android 전체화면/캔버스에서 click이 유실되는 경우가 있어
+    세 버튼을 같은 IIFE 안에서 pointerup capture로 직접 처리한다.
+    openSummary / continueSolve / confirmExit 함수와 같은 scope라서
+    v53처럼 함수 접근이 끊기지 않는다.
+  */
+  let exitActionBusyV54=false;
+  let lastExitActionV54=0;
+
+  function exitButtonFromEventV54(event){
+    return event.target?.closest?.(
+      "#exitSolveBtn,#continueSolveV49,#confirmExitSolveV49"
+    );
+  }
+
+  function stopExitGestureV54(event){
+    const btn=exitButtonFromEventV54(event);
+    if(!btn)return false;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    return true;
+  }
+
+  window.addEventListener("pointerdown",event=>{
+    if(!exitButtonFromEventV54(event))return;
+    stopExitGestureV54(event);
+  },true);
+
+  window.addEventListener("pointerup",async event=>{
+    const btn=exitButtonFromEventV54(event);
+    if(!btn)return;
+
+    stopExitGestureV54(event);
+
+    const now=Date.now();
+    if(exitActionBusyV54 || now-lastExitActionV54<250)return;
+    exitActionBusyV54=true;
+    lastExitActionV54=now;
+
+    try{
+      if(btn.id==="exitSolveBtn"){
+        await openSummary();
+        return;
+      }
+
+      if(btn.id==="continueSolveV49"){
+        await continueSolve();
+        return;
+      }
+
+      if(btn.id==="confirmExitSolveV49"){
+        await confirmExit();
+      }
+    }catch(err){
+      console.error("v54 exit action failed",err);
+      try{toast("버튼 처리 중 오류가 발생했어");}catch{}
+    }finally{
+      setTimeout(()=>{exitActionBusyV54=false},180);
+    }
+  },true);
+
+  /*
+    PC 마우스/일부 브라우저에서 pointerup이 없는 예외를 위한 click fallback.
+    pointerup 직후 발생한 click은 시간 guard로 중복 실행되지 않는다.
+  */
+  window.addEventListener("click",async event=>{
+    const btn=exitButtonFromEventV54(event);
+    if(!btn)return;
+
+    stopExitGestureV54(event);
+
+    const now=Date.now();
+    if(exitActionBusyV54 || now-lastExitActionV54<250)return;
+    exitActionBusyV54=true;
+    lastExitActionV54=now;
+
+    try{
+      if(btn.id==="exitSolveBtn") await openSummary();
+      else if(btn.id==="continueSolveV49") await continueSolve();
+      else if(btn.id==="confirmExitSolveV49") await confirmExit();
+    }catch(err){
+      console.error("v54 exit click fallback failed",err);
+    }finally{
+      setTimeout(()=>{exitActionBusyV54=false},180);
+    }
+  },true);
+
+  function raiseExitButtonsV54(){
+    const overlay=byId("exitSummaryOverlayV49");
+    if(overlay){
+      overlay.style.setProperty("z-index","2147483647","important");
+      overlay.style.setProperty("pointer-events","auto","important");
+    }
+    ["exitSolveBtn","continueSolveV49","confirmExitSolveV49"].forEach(id=>{
+      const btn=byId(id);
+      if(!btn)return;
+      btn.style.setProperty("pointer-events","auto","important");
+      btn.style.setProperty("touch-action","manipulation","important");
+      btn.style.setProperty("position","relative","important");
+      btn.style.setProperty("z-index","2147483647","important");
+    });
+  }
+
+  raiseExitButtonsV54();
+
   // 상태 변화 후 즉시 표시 갱신
   const oldLoadCurrentProblem=loadCurrentProblem;
   loadCurrentProblem=function(problem){
@@ -5471,120 +5582,4 @@ window.psatManualNextLeftV44 = true;
   };
 
   updateProgress();
-})();
-
-
-/* === v53: 중단 요약창 버튼 터치 먹통 수정 === */
-(function psatExitButtonsV53(){
-  let locked=false;
-
-  function clickTargetV53(event){
-    return event.target?.closest?.(
-      "#exitSolveBtn,#continueSolveV49,#confirmExitSolveV49"
-    );
-  }
-
-  /*
-    pointerdown capture에서 먼저 막아 solve canvas/fullscreen layer가
-    버튼 제스처를 가져가지 못하게 한다.
-  */
-  window.addEventListener("pointerdown",event=>{
-    const btn=clickTargetV53(event);
-    if(!btn)return;
-    event.stopPropagation();
-  },true);
-
-  window.addEventListener("touchstart",event=>{
-    const btn=clickTargetV53(event);
-    if(!btn)return;
-    event.stopPropagation();
-  },{capture:true,passive:true});
-
-  /*
-    실제 액션은 document capture click 하나에서만 처리한다.
-    기존 element listener 여부와 상관없이 반드시 실행.
-  */
-  document.addEventListener("click",async event=>{
-    const btn=clickTargetV53(event);
-    if(!btn)return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-
-    if(locked)return;
-    locked=true;
-
-    try{
-      if(btn.id==="exitSolveBtn"){
-        if(typeof openSummary==="function"){
-          await openSummary();
-        }else{
-          const el=document.getElementById("exitSummaryOverlayV49");
-          if(el){
-            el.classList.remove("hidden");
-            el.style.display="flex";
-          }
-        }
-        return;
-      }
-
-      if(btn.id==="continueSolveV49"){
-        if(typeof continueSolve==="function"){
-          await continueSolve();
-        }else{
-          const el=document.getElementById("exitSummaryOverlayV49");
-          if(el){
-            el.classList.add("hidden");
-            el.style.display="none";
-          }
-          try{ await enterSolveFullscreen(); }catch{}
-          try{ startTimer(); }catch{}
-        }
-        return;
-      }
-
-      if(btn.id==="confirmExitSolveV49"){
-        if(typeof confirmExit==="function"){
-          await confirmExit();
-        }else{
-          const el=document.getElementById("exitSummaryOverlayV49");
-          if(el){
-            el.classList.add("hidden");
-            el.style.display="none";
-          }
-          try{ await pauseCurrentSession(); }catch{}
-        }
-      }
-    }finally{
-      setTimeout(()=>{locked=false},120);
-    }
-  },true);
-
-  function forceButtonLayerV53(){
-    const overlay=document.getElementById("exitSummaryOverlayV49");
-    if(!overlay)return;
-
-    overlay.style.setProperty("z-index","2147483647","important");
-    overlay.style.setProperty("pointer-events","auto","important");
-    overlay.style.setProperty("touch-action","manipulation","important");
-
-    ["continueSolveV49","confirmExitSolveV49"].forEach(id=>{
-      const btn=document.getElementById(id);
-      if(!btn)return;
-      btn.style.setProperty("position","relative","important");
-      btn.style.setProperty("z-index","2147483647","important");
-      btn.style.setProperty("pointer-events","auto","important");
-      btn.style.setProperty("touch-action","manipulation","important");
-    });
-  }
-
-  const obs=new MutationObserver(forceButtonLayerV53);
-  window.addEventListener("DOMContentLoaded",()=>{
-    const overlay=document.getElementById("exitSummaryOverlayV49");
-    if(overlay)obs.observe(overlay,{attributes:true,childList:true,subtree:true});
-    forceButtonLayerV53();
-  });
-
-  setTimeout(forceButtonLayerV53,500);
 })();

@@ -189,11 +189,13 @@
 - v43 복습 번호 유지
 
 
-## v53
-- 중단 요약창의 계속 풀기 / 나가기 버튼 먹통 수정
-- pointerdown/touchstart capture에서 solve layer 제스처 차단
-- document capture click 하나로 버튼 액션 처리
-- 요약창/버튼 z-index 최상단 고정
-- pointer-events/touch-action 강제
-- v52의 푼 문제/남은 문제 표시 유지
+## v54
+- v53 폐기, v52 기준으로 다시 제작
+- 중단/계속 풀기/나가기 3개 버튼을 v52 exit IIFE 내부에서 처리
+- Android에서 click 유실 대비 pointerup capture 사용
+- click fallback + 중복 실행 guard
+- 중단 시 fullscreen 종료 후 팝업을 body 최상단으로 표시
+- 계속 풀기 시 타이머 복원 + fullscreen 재진입
+- 나가기 시 진행 저장 후 종료
+- v52 푼 문제/남은 문제 표시 유지
 - Firebase/수동 다음문제/복습 번호 유지
