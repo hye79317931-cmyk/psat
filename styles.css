@@ -1970,3 +1970,25 @@ body > #exitSummaryOverlayV49 {
   pointer-events:auto!important;
   touch-action:manipulation!important;
 }
+
+
+/* === v53 중단 요약 버튼 터치 우선 === */
+#exitSummaryOverlayV49{
+  z-index:2147483647!important;
+  pointer-events:auto!important;
+  touch-action:manipulation!important;
+}
+
+#exitSummaryOverlayV49 *{
+  pointer-events:auto!important;
+}
+
+#continueSolveV49,
+#confirmExitSolveV49{
+  position:relative!important;
+  z-index:2147483647!important;
+  pointer-events:auto!important;
+  touch-action:manipulation!important;
+  -webkit-user-select:none!important;
+  user-select:none!important;
+}

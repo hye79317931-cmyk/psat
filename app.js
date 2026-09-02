@@ -5428,23 +5428,11 @@ window.psatManualNextLeftV44 = true;
     v49/v50/v51 중첩 handler를 파일에서 제거했고,
     v52는 이 3개 click handler만 사용한다.
   */
-  byId("exitSolveBtn")?.addEventListener("click",event=>{
-    event.preventDefault();
-    event.stopPropagation();
-    openSummary();
-  });
+  
 
-  byId("continueSolveV49")?.addEventListener("click",event=>{
-    event.preventDefault();
-    event.stopPropagation();
-    continueSolve();
-  });
+  
 
-  byId("confirmExitSolveV49")?.addEventListener("click",event=>{
-    event.preventDefault();
-    event.stopPropagation();
-    confirmExit();
-  });
+  
 
   // 상태 변화 후 즉시 표시 갱신
   const oldLoadCurrentProblem=loadCurrentProblem;
@@ -5483,4 +5471,120 @@ window.psatManualNextLeftV44 = true;
   };
 
   updateProgress();
+})();
+
+
+/* === v53: 중단 요약창 버튼 터치 먹통 수정 === */
+(function psatExitButtonsV53(){
+  let locked=false;
+
+  function clickTargetV53(event){
+    return event.target?.closest?.(
+      "#exitSolveBtn,#continueSolveV49,#confirmExitSolveV49"
+    );
+  }
+
+  /*
+    pointerdown capture에서 먼저 막아 solve canvas/fullscreen layer가
+    버튼 제스처를 가져가지 못하게 한다.
+  */
+  window.addEventListener("pointerdown",event=>{
+    const btn=clickTargetV53(event);
+    if(!btn)return;
+    event.stopPropagation();
+  },true);
+
+  window.addEventListener("touchstart",event=>{
+    const btn=clickTargetV53(event);
+    if(!btn)return;
+    event.stopPropagation();
+  },{capture:true,passive:true});
+
+  /*
+    실제 액션은 document capture click 하나에서만 처리한다.
+    기존 element listener 여부와 상관없이 반드시 실행.
+  */
+  document.addEventListener("click",async event=>{
+    const btn=clickTargetV53(event);
+    if(!btn)return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    if(locked)return;
+    locked=true;
+
+    try{
+      if(btn.id==="exitSolveBtn"){
+        if(typeof openSummary==="function"){
+          await openSummary();
+        }else{
+          const el=document.getElementById("exitSummaryOverlayV49");
+          if(el){
+            el.classList.remove("hidden");
+            el.style.display="flex";
+          }
+        }
+        return;
+      }
+
+      if(btn.id==="continueSolveV49"){
+        if(typeof continueSolve==="function"){
+          await continueSolve();
+        }else{
+          const el=document.getElementById("exitSummaryOverlayV49");
+          if(el){
+            el.classList.add("hidden");
+            el.style.display="none";
+          }
+          try{ await enterSolveFullscreen(); }catch{}
+          try{ startTimer(); }catch{}
+        }
+        return;
+      }
+
+      if(btn.id==="confirmExitSolveV49"){
+        if(typeof confirmExit==="function"){
+          await confirmExit();
+        }else{
+          const el=document.getElementById("exitSummaryOverlayV49");
+          if(el){
+            el.classList.add("hidden");
+            el.style.display="none";
+          }
+          try{ await pauseCurrentSession(); }catch{}
+        }
+      }
+    }finally{
+      setTimeout(()=>{locked=false},120);
+    }
+  },true);
+
+  function forceButtonLayerV53(){
+    const overlay=document.getElementById("exitSummaryOverlayV49");
+    if(!overlay)return;
+
+    overlay.style.setProperty("z-index","2147483647","important");
+    overlay.style.setProperty("pointer-events","auto","important");
+    overlay.style.setProperty("touch-action","manipulation","important");
+
+    ["continueSolveV49","confirmExitSolveV49"].forEach(id=>{
+      const btn=document.getElementById(id);
+      if(!btn)return;
+      btn.style.setProperty("position","relative","important");
+      btn.style.setProperty("z-index","2147483647","important");
+      btn.style.setProperty("pointer-events","auto","important");
+      btn.style.setProperty("touch-action","manipulation","important");
+    });
+  }
+
+  const obs=new MutationObserver(forceButtonLayerV53);
+  window.addEventListener("DOMContentLoaded",()=>{
+    const overlay=document.getElementById("exitSummaryOverlayV49");
+    if(overlay)obs.observe(overlay,{attributes:true,childList:true,subtree:true});
+    forceButtonLayerV53();
+  });
+
+  setTimeout(forceButtonLayerV53,500);
 })();

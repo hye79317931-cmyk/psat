@@ -187,3 +187,13 @@
 - v44 수동 다음문제 유지
 - v48 Firebase 증분 동기화 유지
 - v43 복습 번호 유지
+
+
+## v53
+- 중단 요약창의 계속 풀기 / 나가기 버튼 먹통 수정
+- pointerdown/touchstart capture에서 solve layer 제스처 차단
+- document capture click 하나로 버튼 액션 처리
+- 요약창/버튼 z-index 최상단 고정
+- pointer-events/touch-action 강제
+- v52의 푼 문제/남은 문제 표시 유지
+- Firebase/수동 다음문제/복습 번호 유지
