@@ -1,1 +1,1 @@
-PSAT v54 exit popup/button fix from v52
+PSAT v55 force exit fix

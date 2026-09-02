@@ -1990,3 +1990,15 @@ body > #exitSummaryOverlayV49 {
   position:relative!important;
   z-index:2147483647!important;
 }
+
+
+/* === v55 나가기 버튼 확실한 터치 === */
+#confirmExitSolveV49{
+  pointer-events:auto!important;
+  touch-action:manipulation!important;
+  position:relative!important;
+  z-index:2147483647!important;
+}
+#confirmExitSolveV49:active{
+  transform:scale(.98);
+}

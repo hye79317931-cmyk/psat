@@ -5445,6 +5445,93 @@ window.psatManualNextLeftV44 = true;
     openSummary / continueSolve / confirmExit 함수와 같은 scope라서
     v53처럼 함수 접근이 끊기지 않는다.
   */
+
+  /* === v55: 나가기 버튼 전용 강제 종료 경로 === */
+  async function forceExitSolveV55(){
+    /*
+      기존 confirmExit() 내부에서 pauseCurrentSession()으로 넘어가는 경로가
+      Android 전체화면/팝업 상태와 충돌하는 경우가 있어
+      저장과 UI 종료를 한 함수에서 끝낸다.
+    */
+    try{ stopTimer(); }catch{}
+
+    // 현재 세션/문제 진행상태 저장
+    try{
+      if(state.session){
+        state.session.pausedAt=Date.now();
+      }
+    }catch{}
+
+    try{
+      if(typeof savePausedSession==="function"){
+        await savePausedSession();
+      }else if(typeof saveState==="function"){
+        await saveState();
+      }else if(typeof saveAll==="function"){
+        await saveAll();
+      }
+    }catch(err){
+      console.warn("v55 save before exit failed",err);
+    }
+
+    // Firebase 자동 동기화는 비동기 예약만 하고 UI 종료는 기다리지 않음
+    try{
+      if(typeof scheduleFirebaseSyncV48==="function")scheduleFirebaseSyncV48();
+    }catch{}
+    try{
+      if(typeof scheduleCloudSyncV48==="function")scheduleCloudSyncV48();
+    }catch{}
+
+    // 팝업 먼저 닫기
+    try{ hideSummary(); }catch{}
+    const modal=byId("exitSummaryOverlayV49");
+    if(modal){
+      modal.classList.add("hidden");
+      modal.style.setProperty("display","none","important");
+      modal.style.setProperty("pointer-events","none","important");
+    }
+
+    // 전체화면 강제 종료
+    try{
+      if(document.fullscreenElement && document.exitFullscreen){
+        await document.exitFullscreen();
+      }
+    }catch{}
+
+    // 풀이 화면 종료
+    const solvePanel=byId("solvePanel");
+    if(solvePanel){
+      solvePanel.classList.add("hidden");
+      solvePanel.classList.remove("fullscreen-solve");
+      solvePanel.style.removeProperty("display");
+    }
+
+    // 앱 상태 정리
+    try{ state.current=null; }catch{}
+    try{ state.checked=false; }catch{}
+    try{ state.timerId=null; }catch{}
+
+    // 홈/문제선택 화면 복구
+    const home=byId("homePanel") || byId("homeScreen") || byId("mainPanel");
+    if(home)home.classList.remove("hidden");
+
+    try{
+      if(typeof renderAll==="function")renderAll();
+    }catch{}
+    try{
+      if(typeof showView==="function")showView("home");
+    }catch{}
+    try{
+      if(typeof showHome==="function")showHome();
+    }catch{}
+
+    // 브라우저 뒤로가기 같은 상태가 남지 않도록 스크롤/바디 잠금 해제
+    document.body.classList.remove("exit-summary-open-v51");
+    document.body.style.removeProperty("overflow");
+
+    try{ updateLeftProgressV52?.(); }catch{}
+  }
+
   let exitActionBusyV54=false;
   let lastExitActionV54=0;
 
@@ -5491,7 +5578,7 @@ window.psatManualNextLeftV44 = true;
       }
 
       if(btn.id==="confirmExitSolveV49"){
-        await confirmExit();
+        await forceExitSolveV55();
       }
     }catch(err){
       console.error("v54 exit action failed",err);
@@ -5519,7 +5606,7 @@ window.psatManualNextLeftV44 = true;
     try{
       if(btn.id==="exitSolveBtn") await openSummary();
       else if(btn.id==="continueSolveV49") await continueSolve();
-      else if(btn.id==="confirmExitSolveV49") await confirmExit();
+      else if(btn.id==="confirmExitSolveV49") await forceExitSolveV55();
     }catch(err){
       console.error("v54 exit click fallback failed",err);
     }finally{
