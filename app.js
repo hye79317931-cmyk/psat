@@ -4918,8 +4918,8 @@ setTimeout(() => {
 
 /* === v44: 채점 후 왼쪽 다음 문제 버튼 === */
 window.psatManualNextLeftV44 = true;
-/* === v48: 변경된 항목만 실시간 동기화 === */
-(function psatFirebaseSyncV48() {
+/* === v60: 꼬인 데이터 복구 + 정상 동기화 === */
+(function psatFirebaseSyncV60() {
   const FIREBASE_CONFIG = {
     apiKey: "AIzaSyDrjifzM4Gjbs7EpHCKarrI_E96FrDZLKo",
     authDomain: "psat-sync.firebaseapp.com",
@@ -4930,25 +4930,26 @@ window.psatManualNextLeftV44 = true;
     appId: "1:18268452172:web:6700a64f9828e496da4be9"
   };
 
-  const ROOT = "psatData";
-  const LAST_EMAIL_KEY = "psat-firebase-email-v46";
-  const CHUNK_SIZE = 220000;
-  const WRITE_TIMEOUT_MS = 35000;
-  const RETRIES = 3;
+  const ROOT="psatData";
+  const SYNC_SCHEMA=60;
+  const LAST_EMAIL_KEY="psat-firebase-email-v46";
+  const REPAIR_LOCAL_PREFIX="psat-sync-repair-v60:";
+  const CHUNK_SIZE=220000;
+  const WRITE_TIMEOUT_MS=35000;
+  const RETRIES=3;
 
-  let app=null, auth=null, db=null, user=null;
-  let applyingRemote=false, fullPushRunning=false, uiBound=false;
-  let dirtyTimer=null, dirtyRunning=false;
-  const dirty = new Map();
-  let problemsRef=null, historyRef=null, deletionsRef=null;
-  let refreshTimer=null;
+  let app=null,auth=null,db=null,user=null;
+  let applyingRemote=false,fullPushRunning=false,repairRunning=false,uiBound=false;
+  let dirtyTimer=null,dirtyRunning=false,refreshTimer=null;
+  let problemsRef=null,historyRef=null,deletionsRef=null;
+  const dirty=new Map();
 
   const el=id=>document.getElementById(id);
-  const pathForStore=name => name===STORES.problems ? "problems" : name===STORES.history ? "history" : null;
+  const pathForStore=name=>name===STORES.problems?"problems":name===STORES.history?"history":null;
 
   function status(msg,ok=false,err=false){
     const n=el("firebaseSyncStatusV45");
-    if(!n) return;
+    if(!n)return;
     n.textContent=msg;
     n.classList.toggle("sync-ok-v45",!!ok);
     n.classList.toggle("sync-error-v46",!!err);
@@ -4957,20 +4958,21 @@ window.psatManualNextLeftV44 = true;
   function niceError(e){
     const code=String(e?.code||"");
     const msg=String(e?.message||e||"");
-    if(code.includes("permission-denied")||/permission_denied/i.test(msg)) return "Firebase 권한 거부 · Rules 확인";
-    if(code.includes("network-request-failed")) return "인터넷 연결 확인";
-    if(code.includes("invalid-credential")||code.includes("wrong-password")) return "이메일 또는 비밀번호 확인";
-    if(code.includes("email-already-in-use")) return "이미 만든 계정이야 · 로그인 버튼 사용";
-    if(/timeout/i.test(msg)) return "업로드 시간초과";
+    if(code.includes("permission-denied")||/permission_denied/i.test(msg))return "Firebase 권한 거부 · Rules 확인";
+    if(code.includes("network-request-failed"))return "인터넷 연결 확인";
+    if(code.includes("invalid-credential")||code.includes("wrong-password"))return "이메일 또는 비밀번호 확인";
+    if(code.includes("email-already-in-use"))return "이미 만든 계정이야 · 로그인 버튼 사용";
+    if(/timeout/i.test(msg))return "동기화 시간초과";
     return msg||"동기화 오류";
   }
 
   function initFirebase(){
-    if(app) return;
-    if(!window.firebase) throw new Error("Firebase SDK 로딩 실패");
-    try{ app=firebase.initializeApp(FIREBASE_CONFIG,"psat-v48"); }
-    catch(e){ app=firebase.app("psat-v48"); }
-    auth=app.auth(); db=app.database();
+    if(app)return;
+    if(!window.firebase)throw new Error("Firebase SDK 로딩 실패");
+    try{app=firebase.initializeApp(FIREBASE_CONFIG,"psat-v60");}
+    catch(e){app=firebase.app("psat-v60");}
+    auth=app.auth();
+    db=app.database();
     auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
   }
 
@@ -4979,30 +4981,34 @@ window.psatManualNextLeftV44 = true;
       .replace(/\./g,"%2E").replace(/#/g,"%23").replace(/\$/g,"%24")
       .replace(/\[/g,"%5B").replace(/\]/g,"%5D").replace(/\//g,"%2F");
   }
-  function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+  function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
   async function withTimeout(promise,ms,label){
     let timer;
-    const timeout=new Promise((_,reject)=>{ timer=setTimeout(()=>reject(new Error(`timeout:${label}`)),ms); });
-    try{return await Promise.race([promise,timeout]);} finally{clearTimeout(timer);}
+    const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(`timeout:${label}`)),ms);});
+    try{return await Promise.race([promise,timeout]);}finally{clearTimeout(timer);}
   }
   async function retryWrite(fn,label){
     let last;
     for(let a=1;a<=RETRIES;a++){
       try{return await withTimeout(fn(),WRITE_TIMEOUT_MS,label);}catch(e){
         last=e;
-        if(a<RETRIES){ status(`${label} 재시도 ${a}/${RETRIES-1}`); await sleep(800*a); }
+        if(a<RETRIES){status(`${label} 재시도 ${a}/${RETRIES-1}`);await sleep(700*a);}
       }
     }
     throw last;
   }
   function splitText(text){
-    const out=[]; for(let i=0;i<text.length;i+=CHUNK_SIZE) out.push(text.slice(i,i+CHUNK_SIZE));
+    const out=[];
+    for(let i=0;i<text.length;i+=CHUNK_SIZE)out.push(text.slice(i,i+CHUNK_SIZE));
     return out.length?out:[""];
   }
   function hashText(text){
     let h=2166136261;
-    for(let i=0;i<text.length;i++){h^=text.charCodeAt(i); h=Math.imul(h,16777619);}
+    for(let i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,16777619);}
     return (h>>>0).toString(16)+":"+text.length;
+  }
+  function sameJson(a,b){
+    try{return JSON.stringify(a)===JSON.stringify(b);}catch{return false;}
   }
 
   async function uploadOne(path,row,label){
@@ -5010,7 +5016,10 @@ window.psatManualNextLeftV44 = true;
     const text=JSON.stringify(row);
     const fp=hashText(text);
     const chunks=splitText(text);
-    await retryWrite(()=>ref.set({__v48:1,complete:false,fingerprint:fp,chunkCount:chunks.length,totalChars:text.length,chunks:{}}),`${label} 준비`);
+    await retryWrite(()=>ref.set({
+      __v48:1,complete:false,fingerprint:fp,
+      chunkCount:chunks.length,totalChars:text.length,chunks:{}
+    }),`${label} 준비`);
     for(let i=0;i<chunks.length;i++){
       status(`${label} · 조각 ${i+1}/${chunks.length}`);
       await retryWrite(()=>ref.child(`chunks/${i}`).set(chunks[i]),`${label} 조각 ${i+1}`);
@@ -5020,380 +5029,455 @@ window.psatManualNextLeftV44 = true;
 
   async function removeOne(path,id,label){
     if(path==="problems"){
-      const marker={
-        id:String(id),
-        deletedAt:Date.now(),
-        deviceId:state.deviceId||""
-      };
+      const marker={id:String(id),deletedAt:Date.now(),schemaV60:SYNC_SCHEMA};
       await retryWrite(
         ()=>db.ref(`${ROOT}/${user.uid}/_deletions/problems/${keyOf(id)}`).set(marker),
-        "삭제 표시 저장"
+        "삭제 기록 저장"
       );
     }
-    await retryWrite(
-      ()=>db.ref(`${ROOT}/${user.uid}/${path}/${keyOf(id)}`).remove(),
-      label
-    );
+    await retryWrite(()=>db.ref(`${ROOT}/${user.uid}/${path}/${keyOf(id)}`).remove(),label);
   }
 
-  function decodeRow(value){
-    if(!value) return null;
-    if(value.__v48!==1 && value.__v47!==1) return value;
-    if(value.complete!==true) return null;
-    const count=Number(value.chunkCount||0), chunks=value.chunks||{};
+  function parseChunks(value,allowIncomplete=false){
+    if(!value)return null;
+    if(value.__v48!==1&&value.__v47!==1)return value;
+    if(!allowIncomplete&&value.complete!==true)return null;
+
+    let count=Number(value.chunkCount||0);
+    const chunks=value.chunks||{};
+    if(!count){
+      const keys=Object.keys(chunks).map(Number).filter(Number.isFinite).sort((a,b)=>a-b);
+      if(keys.length)count=keys[keys.length-1]+1;
+    }
+    if(!count)return null;
+
     let text="";
-    for(let i=0;i<count;i++){ if(typeof chunks[i]!=="string") return null; text+=chunks[i]; }
+    for(let i=0;i<count;i++){
+      if(typeof chunks[i]!=="string")return null;
+      text+=chunks[i];
+    }
     try{return JSON.parse(text);}catch{return null;}
   }
-  function decodeCollection(obj){
-    if(!obj||typeof obj!=="object") return [];
-    const out=[]; for(const v of Object.values(obj)){const row=decodeRow(v); if(row?.id) out.push(row);} return out;
+  function decodeRow(value){return parseChunks(value,false);}
+  function decodeRowForRepair(value){return parseChunks(value,true);}
+  function decodeCollection(obj,repair=false){
+    if(!obj||typeof obj!=="object")return [];
+    const out=[];
+    for(const v of Object.values(obj)){
+      const row=repair?decodeRowForRepair(v):decodeRow(v);
+      if(row?.id)out.push(row);
+    }
+    return out;
   }
 
-  async function nativePut(storeName,row){
-    await tx(storeName,'readwrite',store=>store.put(row));
-  }
-  async function nativeRemove(storeName,id){
-    await tx(storeName,'readwrite',store=>store.delete(id));
-  }
+  async function nativePut(storeName,row){await tx(storeName,'readwrite',store=>store.put(row));}
+  async function nativeRemove(storeName,id){await tx(storeName,'readwrite',store=>store.delete(id));}
   async function nativeGet(storeName,id){
     const dbi=await openDb();
     const transaction=dbi.transaction(storeName,'readonly');
-    const store=transaction.objectStore(storeName);
-    return requestToPromise(store.get(id));
+    return requestToPromise(transaction.objectStore(storeName).get(id));
+  }
+  async function replaceStoreNative(storeName,rows){
+    await tx(storeName,'readwrite',store=>{
+      store.clear();
+      for(const row of rows)store.put(row);
+    });
   }
 
-  function problemStampV56(row){
+  function finiteMax(...values){
+    const nums=values.map(Number).filter(Number.isFinite);
+    return nums.length?Math.max(...nums):0;
+  }
+  function positiveMin(...values){
+    const nums=values.map(Number).filter(v=>Number.isFinite(v)&&v>0);
+    return nums.length?Math.min(...nums):0;
+  }
+  function contentStamp(row){
     if(!row)return 0;
-    return Math.max(
-      Number(row.syncModifiedAtV56||0),
-      Number(row.updatedAt||0),
-      Number(row.lastAnsweredAt||0),
-      Number(row.createdAt||0)
+    return finiteMax(
+      row.syncModifiedAtV60,
+      row.syncModifiedAtV56,
+      row.updatedAt,
+      row.lastAnsweredAt,
+      row.createdAt
     );
   }
-
-  function preserveLocalOrderV56(local,remote){
-    if(!local)return remote;
-    const merged={...local,...remote};
-    if(Number.isFinite(Number(local.order))){
-      merged.order=Number(local.order);
+  function lastAnswerStamp(row){return finiteMax(row?.lastAnsweredAt,row?.updatedAt);}
+  function arrayUnion(a,b){
+    const out=[];const seen=new Set();
+    for(const item of [...(Array.isArray(a)?a:[]),...(Array.isArray(b)?b:[])]){
+      let k;try{k=JSON.stringify(item);}catch{k=String(item);}
+      if(seen.has(k))continue;seen.add(k);out.push(item);
     }
-    if(local.createdAt) merged.createdAt=local.createdAt;
+    return out;
+  }
+
+  function mergeProblemRows(a,b){
+    if(!a)return b?structuredClone(b):null;
+    if(!b)return structuredClone(a);
+
+    const aStamp=contentStamp(a),bStamp=contentStamp(b);
+    const newer=bStamp>aStamp?b:a;
+    const older=newer===a?b:a;
+    const merged={...older,...newer};
+
+    // 원본 문제/해설은 한쪽이 비어 있으면 다른 쪽 값으로 복구.
+    for(const field of ["imageData","explanationImageData","explanation","subject","year","category"]){
+      if((merged[field]===undefined||merged[field]===null||merged[field]==="") && older[field])merged[field]=older[field];
+    }
+    if(!Number.isFinite(Number(merged.answer))&&Number.isFinite(Number(older.answer)))merged.answer=older.answer;
+
+    merged.createdAt=positiveMin(a.createdAt,b.createdAt)||finiteMax(a.createdAt,b.createdAt);
+    merged.updatedAt=finiteMax(a.updatedAt,b.updatedAt);
+    merged.lastAnsweredAt=finiteMax(a.lastAnsweredAt,b.lastAnsweredAt);
+    merged.syncModifiedAtV60=finiteMax(a.syncModifiedAtV60,a.syncModifiedAtV56,b.syncModifiedAtV60,b.syncModifiedAtV56);
+    merged.syncSchemaV60=SYNC_SCHEMA;
+
+    // 풀이 통계는 감소시키지 않는다.
+    for(const field of ["attempts","correct","wrong","totalTimeMs"]){
+      merged[field]=finiteMax(a[field],b[field]);
+    }
+    // 마지막 1회 시간/결과는 더 최근 풀이 쪽.
+    const latestAnswer=lastAnswerStamp(b)>lastAnswerStamp(a)?b:a;
+    if(latestAnswer.lastTimeMs!==undefined)merged.lastTimeMs=latestAnswer.lastTimeMs;
+    if(latestAnswer.lastResult!==undefined)merged.lastResult=latestAnswer.lastResult;
+    if(latestAnswer.wrongActive!==undefined)merged.wrongActive=latestAnswer.wrongActive;
+    if(latestAnswer.correctStreak!==undefined)merged.correctStreak=latestAnswer.correctStreak;
+
+    merged.flagged=!!(a.flagged||b.flagged);
+    merged.tags=arrayUnion(a.tags,b.tags);
+    merged.annotations=arrayUnion(a.annotations,b.annotations);
     return merged;
   }
 
-  async function mergeProblemV56(remote){
-    if(!remote?.id)return false;
-    const local=await nativeGet(STORES.problems,remote.id);
-
-    if(!local){
-      await nativePut(STORES.problems,remote);
-      return true;
-    }
-
-    const remoteStamp=problemStampV56(remote);
-    const localStamp=problemStampV56(local);
-
-    /*
-      동기화가 기존 로컬 순서를 절대 바꾸지 않는다.
-      내용은 더 최신인 쪽만 적용.
-    */
-    if(remoteStamp>localStamp){
-      await nativePut(
-        STORES.problems,
-        preserveLocalOrderV56(local,remote)
-      );
-      return true;
-    }
-
-    return false;
+  function historyStamp(row){
+    return finiteMax(row?.completedAt,row?.createdAt,row?.updatedAt,row?.answeredAt,row?.timestamp);
+  }
+  function mergeHistoryRows(a,b){
+    if(!a)return b?structuredClone(b):null;
+    if(!b)return structuredClone(a);
+    return historyStamp(b)>historyStamp(a)?{...a,...b}:{...b,...a};
   }
 
-  async function mergeHistoryV56(remote){
-    if(!remote?.id)return false;
-    const local=await nativeGet(STORES.history,remote.id);
-    if(local)return false;
-    await nativePut(STORES.history,remote);
-    return true;
+  function mapUnion(rows,merger){
+    const map=new Map();
+    for(const row of rows){
+      if(!row?.id)continue;
+      const id=String(row.id);
+      map.set(id,merger(map.get(id),row));
+    }
+    return map;
   }
 
-  async function applyProblemDeletionV56(value){
-    const marker=value&&typeof value==="object"?value:null;
-    const id=String(marker?.id||"");
+  function canonicalizeProblemOrder(rows,repairAt=Date.now()){
+    const list=[...rows];
+    list.sort((a,b)=>{
+      const ac=Number(a.createdAt)||0,bc=Number(b.createdAt)||0;
+      if(ac!==bc)return bc-ac; // 새로 등록한 문제가 위
+      const au=Number(a.updatedAt)||0,bu=Number(b.updatedAt)||0;
+      if(au!==bu)return bu-au;
+      return String(a.id).localeCompare(String(b.id));
+    });
+    list.forEach((row,index)=>{
+      row.order=index+1;
+      row.canonicalOrderV60=true;
+      row.orderModifiedAtV60=repairAt;
+      row.syncSchemaV60=SYNC_SCHEMA;
+    });
+    return list;
+  }
+
+  function mergeRemoteIntoLocal(local,remote){
+    const merged=mergeProblemRows(local,remote);
+    if(!merged)return merged;
+
+    // v60에서 만든 순서만 신뢰한다. 구버전의 꼬인 order는 무시.
+    const localOrderStamp=Number(local?.orderModifiedAtV60||0);
+    const remoteOrderStamp=Number(remote?.orderModifiedAtV60||0);
+    if(remote?.canonicalOrderV60===true && remoteOrderStamp>=localOrderStamp){
+      merged.order=Number(remote.order);
+      merged.canonicalOrderV60=true;
+      merged.orderModifiedAtV60=remoteOrderStamp;
+    }else if(local?.canonicalOrderV60===true){
+      merged.order=Number(local.order);
+      merged.canonicalOrderV60=true;
+      merged.orderModifiedAtV60=localOrderStamp;
+    }else{
+      // 아직 복구 전인 데이터끼리는 등록시각 기준으로 임시 위치 유지.
+      merged.order=Number.isFinite(Number(local?.order))?Number(local.order):Number(remote?.order);
+    }
+    return merged;
+  }
+
+  function scheduleRefresh(){
+    clearTimeout(refreshTimer);
+    refreshTimer=setTimeout(()=>refresh().catch(console.warn),180);
+  }
+
+  async function cloudSnapshots(repair=false){
+    const [ps,hs,ds,meta]=await Promise.all([
+      withTimeout(db.ref(`${ROOT}/${user.uid}/problems`).once('value'),WRITE_TIMEOUT_MS,'문제 받기'),
+      withTimeout(db.ref(`${ROOT}/${user.uid}/history`).once('value'),WRITE_TIMEOUT_MS,'기록 받기'),
+      withTimeout(db.ref(`${ROOT}/${user.uid}/_deletions/problems`).once('value'),WRITE_TIMEOUT_MS,'삭제기록 받기'),
+      withTimeout(db.ref(`${ROOT}/${user.uid}/_meta`).once('value'),WRITE_TIMEOUT_MS,'메타 확인')
+    ]);
+    return {
+      problems:decodeCollection(ps.val(),repair),
+      history:decodeCollection(hs.val(),repair),
+      deletionRaw:ds.val()||{},
+      meta:meta.val()||{},
+      rawProblems:ps.val()||{},
+      rawHistory:hs.val()||{}
+    };
+  }
+
+  async function applyDeletionMarker(marker){
+    if(!marker||Number(marker.schemaV60)!==SYNC_SCHEMA)return false;
+    const id=String(marker.id||"");
     if(!id)return false;
-
-    /*
-      문제는 명시적 삭제 marker가 있을 때만 삭제한다.
-      cloud child_removed만으로 로컬 문제를 지우지 않는다.
-    */
     const local=await nativeGet(STORES.problems,id);
     if(!local)return false;
 
     const deletedAt=Number(marker.deletedAt||0);
-    const localStamp=problemStampV56(local);
-    if(deletedAt && deletedAt>=localStamp){
-      applyingRemote=true;
-      try{
-        await nativeRemove(STORES.problems,id);
-      }finally{
-        applyingRemote=false;
-      }
-      return true;
-    }
-    return false;
-  }
+    if(deletedAt<=contentStamp(local))return false;
 
-  async function replaceStore(storeName,rows){
-    await tx(storeName,'readwrite',store=>{
-      store.clear();
-      for(const row of rows) store.put(row);
-    });
-  }
-  function scheduleRefresh(){
-    clearTimeout(refreshTimer);
-    refreshTimer=setTimeout(()=>{ refresh().catch(console.warn); },180);
+    applyingRemote=true;
+    try{await nativeRemove(STORES.problems,id);}finally{applyingRemote=false;}
+    return true;
   }
 
   async function pullAll(){
-    if(!user||!db) throw new Error("먼저 로그인해줘");
+    if(!user||!db)throw new Error("먼저 로그인해줘");
     applyingRemote=true;
     try{
-      status("클라우드 데이터 안전하게 합치는 중...");
-
-      const [ps,hs,ds]=await Promise.all([
-        withTimeout(
-          db.ref(`${ROOT}/${user.uid}/problems`).once('value'),
-          WRITE_TIMEOUT_MS,
-          '문제 받기'
-        ),
-        withTimeout(
-          db.ref(`${ROOT}/${user.uid}/history`).once('value'),
-          WRITE_TIMEOUT_MS,
-          '기록 받기'
-        ),
-        withTimeout(
-          db.ref(`${ROOT}/${user.uid}/_deletions/problems`).once('value'),
-          WRITE_TIMEOUT_MS,
-          '삭제표시 받기'
-        )
-      ]);
-
-      const pRows=decodeCollection(ps.val());
-      const hRows=decodeCollection(hs.val());
-
+      status("클라우드와 안전하게 합치는 중...");
+      const cloud=await cloudSnapshots(false);
       let changed=false;
 
-      /*
-        v56 핵심:
-        local store clear 금지.
-        cloud에 없는 로컬 문제도 그대로 보존한다.
-      */
-      for(const row of pRows){
-        const local=await nativeGet(STORES.problems,row.id);
-        if(!local){
-          await nativePut(STORES.problems,row);
-          changed=true;
-          continue;
-        }
-
-        const remoteStamp=problemStampV56(row);
-        const localStamp=problemStampV56(local);
-
-        if(remoteStamp>localStamp){
-          await nativePut(
-            STORES.problems,
-            preserveLocalOrderV56(local,row)
-          );
+      for(const remote of cloud.problems){
+        const local=await nativeGet(STORES.problems,remote.id);
+        const merged=mergeRemoteIntoLocal(local,remote);
+        if(!local||!sameJson(local,merged)){
+          await nativePut(STORES.problems,merged);
           changed=true;
         }
       }
-
-      for(const row of hRows){
-        const local=await nativeGet(STORES.history,row.id);
-        if(!local){
-          await nativePut(STORES.history,row);
+      for(const remote of cloud.history){
+        const local=await nativeGet(STORES.history,remote.id);
+        const merged=mergeHistoryRows(local,remote);
+        if(!local||!sameJson(local,merged)){
+          await nativePut(STORES.history,merged);
           changed=true;
         }
       }
-
-      /*
-        명시적 삭제 marker만 반영.
-        cloud 목록에서 단순히 빠졌다는 이유로 삭제하지 않는다.
-      */
-      const deletionValues=ds.val()||{};
-      for(const marker of Object.values(deletionValues)){
-        if(await applyProblemDeletionV56(marker))changed=true;
+      for(const marker of Object.values(cloud.deletionRaw)){
+        if(await applyDeletionMarker(marker))changed=true;
       }
 
       if(changed)await refresh();
       const count=(await getAll(STORES.problems)).length;
       status(`동기화됨 · ${count}문제`,true);
       return changed;
-    } finally {
-      applyingRemote=false;
-    }
+    }finally{applyingRemote=false;}
   }
 
-
-  async function fullUploadStore(path,storeName,label){
-    const rows=await getAll(storeName);
-    const cloud=(
-      await withTimeout(
-        db.ref(`${ROOT}/${user.uid}/${path}`).once('value'),
-        WRITE_TIMEOUT_MS,
-        `${label} 목록 확인`
-      )
-    ).val()||{};
-
-    /*
-      v56:
-      이 기기에 없는 문제를 cloud에서 삭제하지 않는다.
-      업로드는 upsert만 한다.
-    */
+  async function uploadRowsSafe(path,rows,cloudRaw,label){
+    let uploaded=0;
     for(let i=0;i<rows.length;i++){
       const row=rows[i];
-      const k=keyOf(row.id);
-      const old=cloud[k];
+      const old=cloudRaw[keyOf(row.id)];
       const text=JSON.stringify(row);
       const fp=hashText(text);
-
-      if(
-        old &&
-        (old.__v48===1||old.__v47===1) &&
-        old.complete===true &&
-        old.fingerprint===fp
-      ){
+      if(old&&(old.__v48===1||old.__v47===1)&&old.complete===true&&old.fingerprint===fp){
         status(`${label} 확인 · ${i+1}/${rows.length}`);
         continue;
       }
-
-      status(`${label} 업로드 · ${i+1}/${rows.length}`);
+      status(`${label} 저장 · ${i+1}/${rows.length}`);
       await uploadOne(path,row,`${label} ${i+1}/${rows.length}`);
+      uploaded++;
     }
-    return rows.length;
+    return uploaded;
   }
 
+  async function repairAndNormalize(force=false){
+    if(!user||!db)throw new Error("먼저 로그인해줘");
+    if(repairRunning||fullPushRunning||dirtyRunning)return;
+
+    const localRepairKey=REPAIR_LOCAL_PREFIX+user.uid;
+    if(!force&&localStorage.getItem(localRepairKey)==="1"){
+      return pullAll();
+    }
+
+    repairRunning=true;
+    stopRemote();
+    try{
+      status("동기화 복구 1/4 · 폰/태블릿/클라우드 자료 찾는 중...");
+
+      const [localProblems,localHistory,cloud]=await Promise.all([
+        getAll(STORES.problems),
+        getAll(STORES.history),
+        cloudSnapshots(true)
+      ]);
+
+      /*
+        복구에서는 기존 삭제기록을 적용하지 않는다.
+        v56 이전/복구 전의 잘못된 삭제 신호가 살아 있는 문제를 다시 지우지 못하게 한다.
+        v60 이후 직접 삭제한 marker만 일반 동기화에서 반영된다.
+      */
+      const repairAt=Date.now();
+      const problemMap=mapUnion([...cloud.problems,...localProblems],mergeProblemRows);
+      const canonicalProblems=canonicalizeProblemOrder([...problemMap.values()],repairAt);
+
+      const historyMap=mapUnion([...cloud.history,...localHistory],mergeHistoryRows);
+      const canonicalHistory=[...historyMap.values()];
+
+      status(`동기화 복구 2/4 · ${canonicalProblems.length}문제 로컬 복원 중...`);
+      applyingRemote=true;
+      try{
+        await replaceStoreNative(STORES.problems,canonicalProblems);
+        await replaceStoreNative(STORES.history,canonicalHistory);
+      }finally{applyingRemote=false;}
+      await refresh();
+
+      status("동기화 복구 3/4 · 클라우드 기준본 만드는 중...");
+      await uploadRowsSafe('problems',canonicalProblems,cloud.rawProblems,'복구 문제');
+      await uploadRowsSafe('history',canonicalHistory,cloud.rawHistory,'복구 기록');
+
+      status("동기화 복구 4/4 · 기준 확정 중...");
+      await retryWrite(()=>db.ref(`${ROOT}/${user.uid}/_meta`).update({
+        updatedAt:firebase.database.ServerValue.TIMESTAMP,
+        repairVersion:SYNC_SCHEMA,
+        repairAt,
+        problemCount:canonicalProblems.length,
+        historyCount:canonicalHistory.length,
+        syncSchema:SYNC_SCHEMA
+      }),"복구 메타 저장");
+
+      localStorage.setItem(localRepairKey,"1");
+      status(`동기화 복구 완료 · ${canonicalProblems.length}문제`,true);
+      try{showToast(`동기화 복구 완료 · ${canonicalProblems.length}문제`);}catch{}
+    }finally{
+      repairRunning=false;
+      startRemote();
+    }
+  }
 
   async function pushAll(){
-    if(!user||!db) throw new Error("먼저 로그인해줘");
-    if(fullPushRunning||applyingRemote) return;
+    if(!user||!db)throw new Error("먼저 로그인해줘");
+    if(fullPushRunning||applyingRemote||repairRunning)return;
     fullPushRunning=true;
     try{
-      const pc=await fullUploadStore('problems',STORES.problems,'문제');
-      const hc=await fullUploadStore('history',STORES.history,'풀이기록');
-      await retryWrite(()=>db.ref(`${ROOT}/${user.uid}/_meta`).set({updatedAt:firebase.database.ServerValue.TIMESTAMP,problemCount:pc,historyCount:hc,version:48}),'마지막 저장');
-      status(`클라우드 저장 완료 · ${pc}문제`,true);
-    } finally { fullPushRunning=false; }
+      const cloud=await cloudSnapshots(false);
+      const rows=await getAll(STORES.problems);
+      const histories=await getAll(STORES.history);
+      await uploadRowsSafe('problems',rows,cloud.rawProblems,'문제');
+      await uploadRowsSafe('history',histories,cloud.rawHistory,'풀이기록');
+      await retryWrite(()=>db.ref(`${ROOT}/${user.uid}/_meta`).update({
+        updatedAt:firebase.database.ServerValue.TIMESTAMP,
+        problemCount:rows.length,
+        historyCount:histories.length,
+        syncSchema:SYNC_SCHEMA
+      }),"마지막 저장");
+      status(`클라우드 저장 완료 · ${rows.length}문제`,true);
+    }finally{fullPushRunning=false;}
   }
 
   function queueDirty(storeName,action,id,row){
-    if(!user||applyingRemote||fullPushRunning) return;
-    const path=pathForStore(storeName); if(!path||!id) return;
+    if(!user||applyingRemote||fullPushRunning||repairRunning)return;
+    const path=pathForStore(storeName);
+    if(!path||!id)return;
     dirty.set(`${storeName}:${id}`,{storeName,path,action,id,row});
-    clearTimeout(dirtyTimer); dirtyTimer=setTimeout(flushDirty,650);
+    clearTimeout(dirtyTimer);
+    dirtyTimer=setTimeout(flushDirty,650);
   }
 
   async function flushDirty(){
-    if(dirtyRunning||!user||applyingRemote||fullPushRunning||!dirty.size) return;
+    if(dirtyRunning||!user||applyingRemote||fullPushRunning||repairRunning||!dirty.size)return;
     dirtyRunning=true;
-    const jobs=Array.from(dirty.values()); dirty.clear();
+    const jobs=Array.from(dirty.values());dirty.clear();
     try{
       for(let i=0;i<jobs.length;i++){
         const j=jobs[i];
         status(`변경사항 동기화 · ${i+1}/${jobs.length}`);
-        if(j.action==='remove') await removeOne(j.path,j.id,'삭제 동기화');
+        if(j.action==='remove')await removeOne(j.path,j.id,'삭제 동기화');
         else await uploadOne(j.path,j.row,'변경사항');
       }
       status(`실시간 동기화됨 · ${state.problems?.length||0}문제`,true);
     }catch(e){
-      for(const j of jobs) dirty.set(`${j.storeName}:${j.id}`,j);
+      for(const j of jobs)dirty.set(`${j.storeName}:${j.id}`,j);
       status(`자동 동기화 실패 · ${niceError(e)}`,false,true);
     }finally{dirtyRunning=false;}
   }
 
-  // 기본 put 안의 예전 전체동기화 예약을 무력화하고, 실제 변경된 항목만 큐에 넣는다.
-  scheduleSyncForLocalChange=function(){ };
-  const basePut=put, baseRemove=remove, baseClearStore=clearStore;
+  // 구버전의 전체 자동 업로드 예약 제거.
+  scheduleSyncForLocalChange=function(){};
+  const basePut=put,baseRemove=remove,baseClearStore=clearStore;
+
   put=async function(storeName,value){
-    if(
-      storeName===STORES.problems &&
-      value &&
-      !applyingRemote
-    ){
-      value.syncModifiedAtV56=Date.now();
+    if(storeName===STORES.problems&&value&&!applyingRemote){
+      const now=Date.now();
+      value.syncModifiedAtV60=now;
+      value.syncSchemaV60=SYNC_SCHEMA;
+      value.orderModifiedAtV60=now;
+      value.canonicalOrderV60=true;
     }
-
     const result=await basePut(storeName,value);
-
-    if(!applyingRemote){
-      queueDirty(storeName,'put',value?.id,value);
-    }
+    if(!applyingRemote)queueDirty(storeName,'put',value?.id,value);
     return result;
   };
+
   remove=async function(storeName,id){
     const result=await baseRemove(storeName,id);
-    if(!applyingRemote) queueDirty(storeName,'remove',id,null);
+    if(!applyingRemote)queueDirty(storeName,'remove',id,null);
     return result;
   };
+
   clearStore=async function(storeName){
+    const rows=!applyingRemote?await getAll(storeName):[];
     const result=await baseClearStore(storeName);
-    if(!applyingRemote && user){
-      const path=pathForStore(storeName);
-      if(path){
-        try{await retryWrite(()=>db.ref(`${ROOT}/${user.uid}/${path}`).remove(),'전체 삭제 동기화');}
-        catch(e){status(`삭제 동기화 실패 · ${niceError(e)}`,false,true);}
+    if(!applyingRemote){
+      for(const row of rows){
+        if(row?.id)queueDirty(storeName,'remove',row.id,null);
       }
     }
     return result;
   };
 
-  async function applyRemoteSnapshot(storeName,snap){
-    if(fullPushRunning||dirtyRunning)return;
-
-    const row=decodeRow(snap.val());
-    if(!row?.id)return;
-
-    let changed=false;
+  async function applyRemoteProblem(snap){
+    if(fullPushRunning||dirtyRunning||repairRunning)return;
+    const remote=decodeRow(snap.val());
+    if(!remote?.id)return;
 
     applyingRemote=true;
     try{
-      if(storeName===STORES.problems){
-        const local=await nativeGet(STORES.problems,row.id);
-
-        if(!local){
-          await nativePut(STORES.problems,row);
-          changed=true;
-        }else{
-          const remoteStamp=problemStampV56(row);
-          const localStamp=problemStampV56(local);
-
-          if(remoteStamp>localStamp){
-            await nativePut(
-              STORES.problems,
-              preserveLocalOrderV56(local,row)
-            );
-            changed=true;
-          }
-        }
-      }else if(storeName===STORES.history){
-        const local=await nativeGet(STORES.history,row.id);
-        if(!local){
-          await nativePut(STORES.history,row);
-          changed=true;
-        }
+      const local=await nativeGet(STORES.problems,remote.id);
+      const merged=mergeRemoteIntoLocal(local,remote);
+      if(!local||!sameJson(local,merged)){
+        await nativePut(STORES.problems,merged);
+        scheduleRefresh();
       }
-    }finally{
-      applyingRemote=false;
-    }
-
-    if(changed)scheduleRefresh();
+    }finally{applyingRemote=false;}
   }
 
-  async function applyDeletionSnapshotV56(snap){
-    if(fullPushRunning||dirtyRunning)return;
-    const changed=await applyProblemDeletionV56(snap.val());
-    if(changed)scheduleRefresh();
+  async function applyRemoteHistory(snap){
+    if(fullPushRunning||dirtyRunning||repairRunning)return;
+    const remote=decodeRow(snap.val());
+    if(!remote?.id)return;
+
+    applyingRemote=true;
+    try{
+      const local=await nativeGet(STORES.history,remote.id);
+      const merged=mergeHistoryRows(local,remote);
+      if(!local||!sameJson(local,merged)){
+        await nativePut(STORES.history,merged);
+        scheduleRefresh();
+      }
+    }finally{applyingRemote=false;}
+  }
+
+  async function applyRemoteDeletion(snap){
+    if(fullPushRunning||dirtyRunning||repairRunning)return;
+    if(await applyDeletionMarker(snap.val()))scheduleRefresh();
   }
 
   function stopRemote(){
@@ -5406,66 +5490,85 @@ window.psatManualNextLeftV44 = true;
   function startRemote(){
     stopRemote();
     if(!user||!db)return;
-
     problemsRef=db.ref(`${ROOT}/${user.uid}/problems`);
     historyRef=db.ref(`${ROOT}/${user.uid}/history`);
     deletionsRef=db.ref(`${ROOT}/${user.uid}/_deletions/problems`);
 
-    /*
-      새 문제(child_added)도 받되 기존 로컬 order는 보존.
-      child_removed만으로 문제를 지우는 listener는 제거.
-    */
-    problemsRef.on(
-      'child_added',
-      snap=>applyRemoteSnapshot(STORES.problems,snap).catch(console.warn)
-    );
-    problemsRef.on(
-      'child_changed',
-      snap=>applyRemoteSnapshot(STORES.problems,snap).catch(console.warn)
-    );
-
-    historyRef.on(
-      'child_added',
-      snap=>applyRemoteSnapshot(STORES.history,snap).catch(console.warn)
-    );
-    historyRef.on(
-      'child_changed',
-      snap=>applyRemoteSnapshot(STORES.history,snap).catch(console.warn)
-    );
-
-    deletionsRef.on(
-      'child_added',
-      snap=>applyDeletionSnapshotV56(snap).catch(console.warn)
-    );
-    deletionsRef.on(
-      'child_changed',
-      snap=>applyDeletionSnapshotV56(snap).catch(console.warn)
-    );
+    problemsRef.on('child_added',snap=>applyRemoteProblem(snap).catch(console.warn));
+    problemsRef.on('child_changed',snap=>applyRemoteProblem(snap).catch(console.warn));
+    historyRef.on('child_added',snap=>applyRemoteHistory(snap).catch(console.warn));
+    historyRef.on('child_changed',snap=>applyRemoteHistory(snap).catch(console.warn));
+    deletionsRef.on('child_added',snap=>applyRemoteDeletion(snap).catch(console.warn));
+    deletionsRef.on('child_changed',snap=>applyRemoteDeletion(snap).catch(console.warn));
+    // child_removed만으로는 절대 로컬 문제 삭제하지 않음.
   }
 
-
   async function afterLogin(u){
-    user=u; localStorage.setItem(LAST_EMAIL_KEY,u.email||'');
-    if(el('firebaseEmailV45')&&u.email) el('firebaseEmailV45').value=u.email;
+    user=u;
+    localStorage.setItem(LAST_EMAIL_KEY,u.email||'');
+    if(el('firebaseEmailV45')&&u.email)el('firebaseEmailV45').value=u.email;
     el('firebaseLogoutBtnV45')?.classList.remove('hidden');
     status(`로그인됨 · ${u.email||''}`,true);
+
+    const localRepairKey=REPAIR_LOCAL_PREFIX+u.uid;
     const meta=await withTimeout(db.ref(`${ROOT}/${u.uid}/_meta`).once('value'),WRITE_TIMEOUT_MS,'클라우드 확인');
-    if(meta.exists()) await pullAll(); else await pushAll();
-    startRemote();
+    const metaValue=meta.val()||{};
+
+    // 각 기기에서 v60 최초 1회는 반드시 복구를 실행해 서로 가진 누락 문제를 합친다.
+    if(localStorage.getItem(localRepairKey)!=="1"||Number(metaValue.repairVersion||0)<SYNC_SCHEMA){
+      await repairAndNormalize(true);
+    }else{
+      await pullAll();
+      startRemote();
+    }
   }
 
   function bindUI(){
-    if(uiBound) return; uiBound=true;
-    const email=el('firebaseEmailV45'); if(email) email.value=localStorage.getItem(LAST_EMAIL_KEY)||email.value||'';
+    if(uiBound)return;uiBound=true;
+    const email=el('firebaseEmailV45');
+    if(email)email.value=localStorage.getItem(LAST_EMAIL_KEY)||email.value||'';
+
     el('firebaseSignupBtnV45')?.addEventListener('click',async()=>{
-      try{const e=el('firebaseEmailV45')?.value.trim()||'',p=el('firebasePasswordV45')?.value||''; if(!e||p.length<6) throw new Error('이메일과 6자 이상 비밀번호 입력'); initFirebase(); const c=await auth.createUserWithEmailAndPassword(e,p); await afterLogin(c.user);}catch(err){const m=niceError(err);status(`계정 생성 실패 · ${m}`,false,true);showToast(m);}
+      try{
+        const e=el('firebaseEmailV45')?.value.trim()||'',p=el('firebasePasswordV45')?.value||'';
+        if(!e||p.length<6)throw new Error('이메일과 6자 이상 비밀번호 입력');
+        initFirebase();
+        const c=await auth.createUserWithEmailAndPassword(e,p);
+        await afterLogin(c.user);
+      }catch(err){const m=niceError(err);status(`계정 생성 실패 · ${m}`,false,true);showToast(m);}
     });
+
     el('firebaseLoginBtnV45')?.addEventListener('click',async()=>{
-      try{const e=el('firebaseEmailV45')?.value.trim()||'',p=el('firebasePasswordV45')?.value||''; if(!e||!p) throw new Error('이메일/비밀번호 입력'); initFirebase(); status('로그인 중...'); const c=await auth.signInWithEmailAndPassword(e,p); await afterLogin(c.user);}catch(err){const m=niceError(err);status(`로그인 실패 · ${m}`,false,true);showToast(m);}
+      try{
+        const e=el('firebaseEmailV45')?.value.trim()||'',p=el('firebasePasswordV45')?.value||'';
+        if(!e||!p)throw new Error('이메일/비밀번호 입력');
+        initFirebase();status('로그인 중...');
+        const c=await auth.signInWithEmailAndPassword(e,p);
+        await afterLogin(c.user);
+      }catch(err){const m=niceError(err);status(`로그인 실패 · ${m}`,false,true);showToast(m);}
     });
-    el('firebaseLogoutBtnV45')?.addEventListener('click',async()=>{try{stopRemote();if(auth)await auth.signOut();user=null;status('로그아웃됨');}catch(e){status(niceError(e),false,true);}});
-    el('firebasePushBtnV45')?.addEventListener('click',async()=>{try{await pushAll();showToast('폰 데이터 업로드 완료');}catch(err){const m=niceError(err);status(`업로드 실패 · ${m}`,false,true);showToast(m);}});
-    el('firebasePullBtnV45')?.addEventListener('click',async()=>{try{await pullAll();showToast('클라우드 데이터 받기 완료');}catch(err){const m=niceError(err);status(`받기 실패 · ${m}`,false,true);showToast(m);}});
+
+    el('firebaseLogoutBtnV45')?.addEventListener('click',async()=>{
+      try{stopRemote();if(auth)await auth.signOut();user=null;status('로그아웃됨');}
+      catch(e){status(niceError(e),false,true);}
+    });
+
+    el('firebaseRepairBtnV60')?.addEventListener('click',async()=>{
+      try{
+        if(!confirm('폰/태블릿/클라우드 문제를 합치고 순서를 다시 정상화할까? 문제 자체는 자동 삭제하지 않아.'))return;
+        await repairAndNormalize(true);
+      }catch(err){const m=niceError(err);status(`복구 실패 · ${m}`,false,true);showToast(m);}
+    });
+
+    el('firebasePushBtnV45')?.addEventListener('click',async()=>{
+      try{await pushAll();showToast('이 기기 데이터 안전 업로드 완료');}
+      catch(err){const m=niceError(err);status(`업로드 실패 · ${m}`,false,true);showToast(m);}
+    });
+
+    el('firebasePullBtnV45')?.addEventListener('click',async()=>{
+      try{await pullAll();showToast('클라우드 데이터 병합 완료');}
+      catch(err){const m=niceError(err);status(`받기 실패 · ${m}`,false,true);showToast(m);}
+    });
   }
 
   function start(){
@@ -5474,24 +5577,22 @@ window.psatManualNextLeftV44 = true;
       initFirebase();
       auth.onAuthStateChanged(u=>{
         if(!u){user=null;status('Firebase 연결됨 · 로그인 필요');return;}
-        if(user?.uid===u.uid) return;
-        afterLogin(u).catch(e=>status(`자동 동기화 실패 · ${niceError(e)}`,false,true));
+        if(user?.uid===u.uid)return;
+        afterLogin(u).catch(e=>status(`자동 복구/동기화 실패 · ${niceError(e)}`,false,true));
       });
     }catch(e){status(`Firebase 초기화 실패 · ${niceError(e)}`,false,true);}
   }
-  window.addEventListener('online',()=>{if(user&&dirty.size)flushDirty();});
+
+  window.addEventListener('online',()=>{
+    if(user&&dirty.size)flushDirty();
+    else if(user)pullAll().catch(console.warn);
+  });
+
   setTimeout(start,400);
 })();
 
 
 
-/* === v56: Firebase 안전 병합 + 순서 보호 ===
-   - pull 시 local problems/history clear 금지
-   - full upload 시 cloud 누락항목 자동삭제 금지
-   - 기존 local problem.order는 remote update가 덮어쓰지 않음
-   - 문제 삭제는 _deletions/problems marker가 있을 때만 remote 반영
-   - 새 문제는 child_added로 다른 기기에 추가
-*/
 
 /* === v52: 중단/나가기 단일 처리 + 왼쪽 풀이 진행 표시 === */
 (function psatExitStableV52(){

@@ -1,1 +1,1 @@
-PSAT v56 safe Firebase merge + stable local order
+PSAT v60 repair + canonical sync
