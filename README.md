@@ -207,3 +207,16 @@
 - 나가기 클릭 시 저장 → 타이머 정지 → 팝업 닫기 → fullscreen 종료 → solvePanel 종료를 한 함수에서 직접 실행
 - Firebase 동기화는 UI 종료를 막지 않도록 비동기 예약
 - 계속 풀기 / 중단 팝업 / 푼 문제·남은 문제 표시는 v54/v52 그대로 유지
+
+
+## v56 안전 동기화
+- v55 기준
+- Firebase pull이 로컬 문제목록을 clear/replace하지 않음
+- cloud와 local을 문제 ID별로 병합
+- cloud에 없는 로컬 문제 자동삭제 금지
+- 한 기기에 없는 문제를 전체 업로드가 cloud에서 삭제하지 않음
+- 기존 로컬 problem.order는 remote sync가 덮어쓰지 않음
+- 직접 삭제한 문제만 deletion marker로 다른 기기에 삭제 반영
+- child_added를 받아 새 문제는 다른 기기에 자동 추가
+- 문제 변경마다 syncModifiedAtV56 기록
+- v55 중단/나가기 및 기존 풀이 기능 유지

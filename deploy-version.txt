@@ -1,1 +1,1 @@
-PSAT v55 force exit fix
+PSAT v56 safe Firebase merge + stable local order

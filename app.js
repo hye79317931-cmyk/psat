@@ -4940,7 +4940,7 @@ window.psatManualNextLeftV44 = true;
   let applyingRemote=false, fullPushRunning=false, uiBound=false;
   let dirtyTimer=null, dirtyRunning=false;
   const dirty = new Map();
-  let problemsRef=null, historyRef=null;
+  let problemsRef=null, historyRef=null, deletionsRef=null;
   let refreshTimer=null;
 
   const el=id=>document.getElementById(id);
@@ -5019,7 +5019,21 @@ window.psatManualNextLeftV44 = true;
   }
 
   async function removeOne(path,id,label){
-    await retryWrite(()=>db.ref(`${ROOT}/${user.uid}/${path}/${keyOf(id)}`).remove(),label);
+    if(path==="problems"){
+      const marker={
+        id:String(id),
+        deletedAt:Date.now(),
+        deviceId:state.deviceId||""
+      };
+      await retryWrite(
+        ()=>db.ref(`${ROOT}/${user.uid}/_deletions/problems/${keyOf(id)}`).set(marker),
+        "삭제 표시 저장"
+      );
+    }
+    await retryWrite(
+      ()=>db.ref(`${ROOT}/${user.uid}/${path}/${keyOf(id)}`).remove(),
+      label
+    );
   }
 
   function decodeRow(value){
@@ -5042,6 +5056,94 @@ window.psatManualNextLeftV44 = true;
   async function nativeRemove(storeName,id){
     await tx(storeName,'readwrite',store=>store.delete(id));
   }
+  async function nativeGet(storeName,id){
+    const dbi=await openDb();
+    const transaction=dbi.transaction(storeName,'readonly');
+    const store=transaction.objectStore(storeName);
+    return requestToPromise(store.get(id));
+  }
+
+  function problemStampV56(row){
+    if(!row)return 0;
+    return Math.max(
+      Number(row.syncModifiedAtV56||0),
+      Number(row.updatedAt||0),
+      Number(row.lastAnsweredAt||0),
+      Number(row.createdAt||0)
+    );
+  }
+
+  function preserveLocalOrderV56(local,remote){
+    if(!local)return remote;
+    const merged={...local,...remote};
+    if(Number.isFinite(Number(local.order))){
+      merged.order=Number(local.order);
+    }
+    if(local.createdAt) merged.createdAt=local.createdAt;
+    return merged;
+  }
+
+  async function mergeProblemV56(remote){
+    if(!remote?.id)return false;
+    const local=await nativeGet(STORES.problems,remote.id);
+
+    if(!local){
+      await nativePut(STORES.problems,remote);
+      return true;
+    }
+
+    const remoteStamp=problemStampV56(remote);
+    const localStamp=problemStampV56(local);
+
+    /*
+      동기화가 기존 로컬 순서를 절대 바꾸지 않는다.
+      내용은 더 최신인 쪽만 적용.
+    */
+    if(remoteStamp>localStamp){
+      await nativePut(
+        STORES.problems,
+        preserveLocalOrderV56(local,remote)
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  async function mergeHistoryV56(remote){
+    if(!remote?.id)return false;
+    const local=await nativeGet(STORES.history,remote.id);
+    if(local)return false;
+    await nativePut(STORES.history,remote);
+    return true;
+  }
+
+  async function applyProblemDeletionV56(value){
+    const marker=value&&typeof value==="object"?value:null;
+    const id=String(marker?.id||"");
+    if(!id)return false;
+
+    /*
+      문제는 명시적 삭제 marker가 있을 때만 삭제한다.
+      cloud child_removed만으로 로컬 문제를 지우지 않는다.
+    */
+    const local=await nativeGet(STORES.problems,id);
+    if(!local)return false;
+
+    const deletedAt=Number(marker.deletedAt||0);
+    const localStamp=problemStampV56(local);
+    if(deletedAt && deletedAt>=localStamp){
+      applyingRemote=true;
+      try{
+        await nativeRemove(STORES.problems,id);
+      }finally{
+        applyingRemote=false;
+      }
+      return true;
+    }
+    return false;
+  }
+
   async function replaceStore(storeName,rows){
     await tx(storeName,'readwrite',store=>{
       store.clear();
@@ -5057,35 +5159,121 @@ window.psatManualNextLeftV44 = true;
     if(!user||!db) throw new Error("먼저 로그인해줘");
     applyingRemote=true;
     try{
-      status("클라우드 데이터 받는 중...");
-      const [ps,hs]=await Promise.all([
-        withTimeout(db.ref(`${ROOT}/${user.uid}/problems`).once('value'),WRITE_TIMEOUT_MS,'문제 받기'),
-        withTimeout(db.ref(`${ROOT}/${user.uid}/history`).once('value'),WRITE_TIMEOUT_MS,'기록 받기')
+      status("클라우드 데이터 안전하게 합치는 중...");
+
+      const [ps,hs,ds]=await Promise.all([
+        withTimeout(
+          db.ref(`${ROOT}/${user.uid}/problems`).once('value'),
+          WRITE_TIMEOUT_MS,
+          '문제 받기'
+        ),
+        withTimeout(
+          db.ref(`${ROOT}/${user.uid}/history`).once('value'),
+          WRITE_TIMEOUT_MS,
+          '기록 받기'
+        ),
+        withTimeout(
+          db.ref(`${ROOT}/${user.uid}/_deletions/problems`).once('value'),
+          WRITE_TIMEOUT_MS,
+          '삭제표시 받기'
+        )
       ]);
-      if(!ps.exists()&&!hs.exists()){status("클라우드가 비어 있어"); return false;}
-      const pRows=decodeCollection(ps.val()), hRows=decodeCollection(hs.val());
-      await replaceStore(STORES.problems,pRows); await replaceStore(STORES.history,hRows);
-      await refresh();
-      status(`동기화됨 · ${pRows.length}문제`,true);
-      return true;
-    } finally { applyingRemote=false; }
+
+      const pRows=decodeCollection(ps.val());
+      const hRows=decodeCollection(hs.val());
+
+      let changed=false;
+
+      /*
+        v56 핵심:
+        local store clear 금지.
+        cloud에 없는 로컬 문제도 그대로 보존한다.
+      */
+      for(const row of pRows){
+        const local=await nativeGet(STORES.problems,row.id);
+        if(!local){
+          await nativePut(STORES.problems,row);
+          changed=true;
+          continue;
+        }
+
+        const remoteStamp=problemStampV56(row);
+        const localStamp=problemStampV56(local);
+
+        if(remoteStamp>localStamp){
+          await nativePut(
+            STORES.problems,
+            preserveLocalOrderV56(local,row)
+          );
+          changed=true;
+        }
+      }
+
+      for(const row of hRows){
+        const local=await nativeGet(STORES.history,row.id);
+        if(!local){
+          await nativePut(STORES.history,row);
+          changed=true;
+        }
+      }
+
+      /*
+        명시적 삭제 marker만 반영.
+        cloud 목록에서 단순히 빠졌다는 이유로 삭제하지 않는다.
+      */
+      const deletionValues=ds.val()||{};
+      for(const marker of Object.values(deletionValues)){
+        if(await applyProblemDeletionV56(marker))changed=true;
+      }
+
+      if(changed)await refresh();
+      const count=(await getAll(STORES.problems)).length;
+      status(`동기화됨 · ${count}문제`,true);
+      return changed;
+    } finally {
+      applyingRemote=false;
+    }
   }
+
 
   async function fullUploadStore(path,storeName,label){
     const rows=await getAll(storeName);
-    const cloud=(await withTimeout(db.ref(`${ROOT}/${user.uid}/${path}`).once('value'),WRITE_TIMEOUT_MS,`${label} 목록 확인`)).val()||{};
-    const keep=new Set(rows.map(r=>keyOf(r.id)));
-    for(const k of Object.keys(cloud)){ if(!keep.has(k)) await removeOne(path,decodeURIComponent(k),`${label} 삭제 반영`); }
+    const cloud=(
+      await withTimeout(
+        db.ref(`${ROOT}/${user.uid}/${path}`).once('value'),
+        WRITE_TIMEOUT_MS,
+        `${label} 목록 확인`
+      )
+    ).val()||{};
+
+    /*
+      v56:
+      이 기기에 없는 문제를 cloud에서 삭제하지 않는다.
+      업로드는 upsert만 한다.
+    */
     for(let i=0;i<rows.length;i++){
-      const row=rows[i], k=keyOf(row.id), old=cloud[k], text=JSON.stringify(row), fp=hashText(text);
-      if(old && (old.__v48===1||old.__v47===1) && old.complete===true && old.fingerprint===fp){
-        status(`${label} 확인 · ${i+1}/${rows.length}`); continue;
+      const row=rows[i];
+      const k=keyOf(row.id);
+      const old=cloud[k];
+      const text=JSON.stringify(row);
+      const fp=hashText(text);
+
+      if(
+        old &&
+        (old.__v48===1||old.__v47===1) &&
+        old.complete===true &&
+        old.fingerprint===fp
+      ){
+        status(`${label} 확인 · ${i+1}/${rows.length}`);
+        continue;
       }
+
       status(`${label} 업로드 · ${i+1}/${rows.length}`);
       await uploadOne(path,row,`${label} ${i+1}/${rows.length}`);
     }
     return rows.length;
   }
+
 
   async function pushAll(){
     if(!user||!db) throw new Error("먼저 로그인해줘");
@@ -5128,8 +5316,19 @@ window.psatManualNextLeftV44 = true;
   scheduleSyncForLocalChange=function(){ };
   const basePut=put, baseRemove=remove, baseClearStore=clearStore;
   put=async function(storeName,value){
+    if(
+      storeName===STORES.problems &&
+      value &&
+      !applyingRemote
+    ){
+      value.syncModifiedAtV56=Date.now();
+    }
+
     const result=await basePut(storeName,value);
-    if(!applyingRemote) queueDirty(storeName,'put',value?.id,value);
+
+    if(!applyingRemote){
+      queueDirty(storeName,'put',value?.id,value);
+    }
     return result;
   };
   remove=async function(storeName,id){
@@ -5150,35 +5349,100 @@ window.psatManualNextLeftV44 = true;
   };
 
   async function applyRemoteSnapshot(storeName,snap){
-    if(fullPushRunning||dirtyRunning) return;
-    const row=decodeRow(snap.val()); if(!row?.id) return;
+    if(fullPushRunning||dirtyRunning)return;
+
+    const row=decodeRow(snap.val());
+    if(!row?.id)return;
+
+    let changed=false;
+
     applyingRemote=true;
-    try{ await nativePut(storeName,row); scheduleRefresh(); }
-    finally{ applyingRemote=false; }
+    try{
+      if(storeName===STORES.problems){
+        const local=await nativeGet(STORES.problems,row.id);
+
+        if(!local){
+          await nativePut(STORES.problems,row);
+          changed=true;
+        }else{
+          const remoteStamp=problemStampV56(row);
+          const localStamp=problemStampV56(local);
+
+          if(remoteStamp>localStamp){
+            await nativePut(
+              STORES.problems,
+              preserveLocalOrderV56(local,row)
+            );
+            changed=true;
+          }
+        }
+      }else if(storeName===STORES.history){
+        const local=await nativeGet(STORES.history,row.id);
+        if(!local){
+          await nativePut(STORES.history,row);
+          changed=true;
+        }
+      }
+    }finally{
+      applyingRemote=false;
+    }
+
+    if(changed)scheduleRefresh();
   }
-  async function removeRemoteSnapshot(storeName,snap){
-    if(fullPushRunning||dirtyRunning) return;
-    let id=null;
-    const old=decodeRow(snap.val()); if(old?.id) id=old.id;
-    if(!id) return;
-    applyingRemote=true;
-    try{ await nativeRemove(storeName,id); scheduleRefresh(); }
-    finally{ applyingRemote=false; }
+
+  async function applyDeletionSnapshotV56(snap){
+    if(fullPushRunning||dirtyRunning)return;
+    const changed=await applyProblemDeletionV56(snap.val());
+    if(changed)scheduleRefresh();
   }
 
   function stopRemote(){
-    if(problemsRef) problemsRef.off(); if(historyRef) historyRef.off();
-    problemsRef=historyRef=null;
+    if(problemsRef)problemsRef.off();
+    if(historyRef)historyRef.off();
+    if(deletionsRef)deletionsRef.off();
+    problemsRef=historyRef=deletionsRef=null;
   }
+
   function startRemote(){
-    stopRemote(); if(!user||!db) return;
+    stopRemote();
+    if(!user||!db)return;
+
     problemsRef=db.ref(`${ROOT}/${user.uid}/problems`);
     historyRef=db.ref(`${ROOT}/${user.uid}/history`);
-    problemsRef.on('child_changed',snap=>applyRemoteSnapshot(STORES.problems,snap).catch(console.warn));
-    problemsRef.on('child_removed',snap=>removeRemoteSnapshot(STORES.problems,snap).catch(console.warn));
-    historyRef.on('child_changed',snap=>applyRemoteSnapshot(STORES.history,snap).catch(console.warn));
-    historyRef.on('child_removed',snap=>removeRemoteSnapshot(STORES.history,snap).catch(console.warn));
+    deletionsRef=db.ref(`${ROOT}/${user.uid}/_deletions/problems`);
+
+    /*
+      새 문제(child_added)도 받되 기존 로컬 order는 보존.
+      child_removed만으로 문제를 지우는 listener는 제거.
+    */
+    problemsRef.on(
+      'child_added',
+      snap=>applyRemoteSnapshot(STORES.problems,snap).catch(console.warn)
+    );
+    problemsRef.on(
+      'child_changed',
+      snap=>applyRemoteSnapshot(STORES.problems,snap).catch(console.warn)
+    );
+
+    historyRef.on(
+      'child_added',
+      snap=>applyRemoteSnapshot(STORES.history,snap).catch(console.warn)
+    );
+    historyRef.on(
+      'child_changed',
+      snap=>applyRemoteSnapshot(STORES.history,snap).catch(console.warn)
+    );
+
+    deletionsRef.on(
+      'child_added',
+      snap=>applyDeletionSnapshotV56(snap).catch(console.warn)
+    );
+    deletionsRef.on(
+      'child_changed',
+      snap=>applyDeletionSnapshotV56(snap).catch(console.warn)
+    );
   }
+
 
   async function afterLogin(u){
     user=u; localStorage.setItem(LAST_EMAIL_KEY,u.email||'');
@@ -5219,6 +5483,15 @@ window.psatManualNextLeftV44 = true;
   setTimeout(start,400);
 })();
 
+
+
+/* === v56: Firebase 안전 병합 + 순서 보호 ===
+   - pull 시 local problems/history clear 금지
+   - full upload 시 cloud 누락항목 자동삭제 금지
+   - 기존 local problem.order는 remote update가 덮어쓰지 않음
+   - 문제 삭제는 _deletions/problems marker가 있을 때만 remote 반영
+   - 새 문제는 child_added로 다른 기기에 추가
+*/
 
 /* === v52: 중단/나가기 단일 처리 + 왼쪽 풀이 진행 표시 === */
 (function psatExitStableV52(){
