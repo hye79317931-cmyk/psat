@@ -152,6 +152,8 @@ const state = {
   activePasteTarget: 'problem',
   formProblemImageData: '',
   formExplanationImageData: '',
+  formExplanationPagesV61: [],
+  formExplanationPageIndexV61: 0,
   formExplanationOcrData: '',
   formExplanationOcrCandidates: [],
   formExplanationVisualAnswer: 0,
@@ -1370,7 +1372,7 @@ function getVisibleProblemList() {
     if (year && problemYear !== year) return false;
     if (yearText && !problemYear.toLowerCase().includes(yearText)) return false;
     if (!query) return true;
-    const imageKeyword = p.explanationImageData ? '해설이미지 스크린샷' : '';
+    const imageKeyword = problemExplanationPagesV61(p).length ? '해설이미지 스크린샷' : '';
     const hay = [canonicalSubject(p.subject), p.subject, p.year, p.explanation, imageKeyword].join(' ').toLowerCase();
     return hay.includes(query);
   });
@@ -1732,7 +1734,7 @@ function renderStats() {
   const slow = state.problems.filter((p) => averageTime(p) >= SLOW_MS || (p.lastTimeMs || 0) >= SLOW_MS).length;
   const avg = attempts ? state.problems.reduce((sum, p) => sum + (p.totalTimeMs || 0), 0) / attempts : 0;
   const flagged = state.problems.filter((p) => p.flagged).length;
-  const expImages = state.problems.filter((p) => p.explanationImageData).length;
+  const expImages = state.problems.filter((p) => problemExplanationPagesV61(p).length).length;
   const data = [
     ['전체 문제', `${total}개`],
     ['총 풀이', `${attempts}회`],
@@ -1892,15 +1894,119 @@ function scheduleAnswerDetection() {
   clearTimeout(state.answerDetectTimer);
 }
 
+
+/* === v61 해설 멀티페이지 등록 === */
+function problemExplanationPagesV61(problem) {
+  const pages = Array.isArray(problem?.explanationImagePages)
+    ? problem.explanationImagePages.filter(Boolean)
+    : [];
+  if (pages.length) return pages;
+  return problem?.explanationImageData ? [problem.explanationImageData] : [];
+}
+
+function formExplanationPagesV61() {
+  if (!Array.isArray(state.formExplanationPagesV61)) {
+    state.formExplanationPagesV61 = [];
+  }
+  return state.formExplanationPagesV61;
+}
+
+function updateExplanationPageControlsV61() {
+  const pages = formExplanationPagesV61();
+  const total = Math.max(1, pages.length);
+  state.formExplanationPageIndexV61 = Math.max(
+    0,
+    Math.min(total - 1, Number(state.formExplanationPageIndexV61 || 0))
+  );
+
+  const idx = state.formExplanationPageIndexV61;
+  const badge = document.getElementById('explanationPageBadgeV61');
+  const prev = document.getElementById('prevExplanationPageBtnV61');
+  const next = document.getElementById('nextExplanationPageBtnV61');
+  const del = document.getElementById('deleteExplanationPageBtnV61');
+
+  if (badge) badge.textContent = `해설 ${idx + 1}/${total}쪽`;
+  if (prev) prev.disabled = !pages.length || idx <= 0;
+  if (next) next.disabled = !pages.length || idx >= pages.length - 1;
+  if (del) del.disabled = !pages.length;
+
+  const src = pages[idx] || '';
+  state.formExplanationImageData = src;
+
+  if (src) {
+    els.previewExplanationImage.src = src;
+    els.previewExplanationImage.classList.remove('hidden');
+  } else {
+    els.previewExplanationImage.src = '';
+    els.previewExplanationImage.classList.add('hidden');
+  }
+}
+
+function addExplanationPageV61() {
+  const pages = formExplanationPagesV61();
+
+  if (!pages.length) {
+    pages.push('');
+    state.formExplanationPageIndexV61 = 0;
+  } else if (pages[state.formExplanationPageIndexV61]) {
+    pages.push('');
+    state.formExplanationPageIndexV61 = pages.length - 1;
+  }
+
+  state.formExplanationImageData = '';
+  els.explanationImageInput.value = '';
+  updateExplanationPageControlsV61();
+  setPasteTarget('explanation');
+  try { els.explanationPasteZone.focus(); } catch {}
+  showToast(`해설 ${state.formExplanationPageIndexV61 + 1}쪽 추가됨 · 이미지를 붙여넣어줘`);
+}
+
+function moveExplanationPageV61(delta) {
+  const pages = formExplanationPagesV61();
+  if (!pages.length) return;
+  state.formExplanationPageIndexV61 = Math.max(
+    0,
+    Math.min(pages.length - 1, state.formExplanationPageIndexV61 + delta)
+  );
+  els.explanationImageInput.value = '';
+  updateExplanationPageControlsV61();
+}
+
+function deleteExplanationPageV61() {
+  const pages = formExplanationPagesV61();
+  if (!pages.length) return;
+
+  const idx = Math.max(
+    0,
+    Math.min(pages.length - 1, state.formExplanationPageIndexV61)
+  );
+  pages.splice(idx, 1);
+  state.formExplanationPageIndexV61 = Math.max(0, Math.min(idx, pages.length - 1));
+  state.formExplanationImageData = pages[state.formExplanationPageIndexV61] || '';
+  els.explanationImageInput.value = '';
+  updateExplanationPageControlsV61();
+  showToast('현재 해설 쪽을 삭제했어');
+}
+
 function setFormImage(target, dataUrl) {
   if (target === 'problem') {
     state.formProblemImageData = dataUrl;
     els.previewImage.src = dataUrl;
     els.previewImage.classList.remove('hidden');
   } else {
-    state.formExplanationImageData = dataUrl;
-    els.previewExplanationImage.src = dataUrl;
-    els.previewExplanationImage.classList.remove('hidden');
+    const pages = formExplanationPagesV61();
+    if (!pages.length) {
+      pages.push(dataUrl || '');
+      state.formExplanationPageIndexV61 = 0;
+    } else {
+      const idx = Math.max(
+        0,
+        Math.min(pages.length - 1, Number(state.formExplanationPageIndexV61 || 0))
+      );
+      pages[idx] = dataUrl || '';
+    }
+    state.formExplanationImageData = dataUrl || '';
+    updateExplanationPageControlsV61();
   }
 }
 
@@ -1912,6 +2018,8 @@ function clearFormImage(target) {
     els.previewImage.classList.add('hidden');
   } else {
     state.formExplanationImageData = '';
+    state.formExplanationPagesV61 = [];
+    state.formExplanationPageIndexV61 = 0;
     state.formExplanationOcrData = '';
     state.formExplanationOcrCandidates = [];
     state.formExplanationVisualAnswer = 0;
@@ -1920,6 +2028,7 @@ function clearFormImage(target) {
     els.explanationImageInput.value = '';
     els.previewExplanationImage.src = '';
     els.previewExplanationImage.classList.add('hidden');
+    updateExplanationPageControlsV61();
   }
 }
 
@@ -1991,12 +2100,19 @@ function editProblem(p, options = {}) {
   els.imageInput.value = '';
   els.explanationImageInput.value = '';
   setFormImage('problem', p.imageData || '');
-  if (p.explanationImageData) {
-    state.formExplanationOcrData = p.explanationImageData;
-    state.formExplanationOcrCandidates = [p.explanationImageData];
-    setFormImage('explanation', p.explanationImageData);
+
+  const expPagesV61 = problemExplanationPagesV61(p);
+  state.formExplanationPagesV61 = [...expPagesV61];
+  state.formExplanationPageIndexV61 = 0;
+
+  if (expPagesV61.length) {
+    state.formExplanationOcrData = expPagesV61[0];
+    state.formExplanationOcrCandidates = [expPagesV61[0]];
+    state.formExplanationImageData = expPagesV61[0];
+    updateExplanationPageControlsV61();
+  } else {
+    clearFormImage('explanation');
   }
-  else clearFormImage('explanation');
   els.imageInput.required = false;
   updateFormModeUi();
   setPasteTarget('problem');
@@ -2495,10 +2611,13 @@ async function saveProblemFromForm(event) {
     let imageData = state.formProblemImageData || existing?.imageData || '';
     if (!imageData && els.imageInput.files[0]) imageData = await fileToDataUrl(els.imageInput.files[0]);
 
-    let explanationImageData = state.formExplanationImageData || existing?.explanationImageData || '';
-    if (!explanationImageData && els.explanationImageInput.files[0]) {
-      explanationImageData = await fileToDataUrl(els.explanationImageInput.files[0]);
+    if (els.explanationImageInput.files[0]) {
+      const dataV61 = await fileToDataUrl(els.explanationImageInput.files[0]);
+      setFormImage('explanation', dataV61);
     }
+
+    const explanationImagePages = formExplanationPagesV61().filter(Boolean);
+    const explanationImageData = explanationImagePages[0] || '';
 
     if (!existing && !imageData) {
       showToast('문제 이미지를 올려줘');
@@ -2521,6 +2640,7 @@ async function saveProblemFromForm(event) {
       imageData,
       explanation: els.explanationInput.value.trim(),
       explanationImageData,
+      explanationImagePages,
       tags: tagsToArray(els.tagsInput?.value || ''),
       createdAt: existing?.createdAt || now,
       updatedAt: now,
@@ -3119,6 +3239,11 @@ function bindEvents() {
   els.pasteExplanationBtn.addEventListener('click', () => pasteImageWithClipboardApi('explanation'));
   els.clearProblemImageBtn.addEventListener('click', () => clearFormImage('problem'));
   els.clearExplanationImageBtn.addEventListener('click', () => clearFormImage('explanation'));
+  document.getElementById('addExplanationPageBtnV61')?.addEventListener('click', addExplanationPageV61);
+  document.getElementById('prevExplanationPageBtnV61')?.addEventListener('click', () => moveExplanationPageV61(-1));
+  document.getElementById('nextExplanationPageBtnV61')?.addEventListener('click', () => moveExplanationPageV61(1));
+  document.getElementById('deleteExplanationPageBtnV61')?.addEventListener('click', deleteExplanationPageV61);
+  updateExplanationPageControlsV61();
   document.addEventListener('paste', async (event) => {
     if (event.defaultPrevented) return;
     if (!document.getElementById('addView').classList.contains('active')) return;
@@ -3541,7 +3666,7 @@ function getVisibleProblemList() {
     if (year && problemYear !== year) return false;
     if (yearText && !problemYear.toLowerCase().includes(yearText)) return false;
     if (!query) return true;
-    const imageKeyword = p.explanationImageData ? "해설이미지 스크린샷" : "";
+    const imageKeyword = problemExplanationPagesV61(p).length ? "해설이미지 스크린샷" : "";
     const hay = [canonicalSubject(p.subject), p.subject, problemCategoryV28(p), p.year, p.explanation, imageKeyword].join(" ").toLowerCase();
     return hay.includes(query);
   });
@@ -4224,7 +4349,9 @@ setTimeout(() => {
     maxScale: 8,
     touch: null,
     pointers: new Map(),
-    pointerStart: null
+    pointerStart: null,
+    expPageV61: 0,
+    problemIdV61: ""
   };
 
   function q(id) { return document.getElementById(id); }
@@ -4234,8 +4361,21 @@ setTimeout(() => {
     try { return state && state.current ? state.current : null; } catch { return null; }
   }
 
+  function expPagesV61() {
+    const p = currentProblemV40();
+    if (!p) return [];
+    const pages = Array.isArray(p.explanationImagePages)
+      ? p.explanationImagePages.filter(Boolean)
+      : [];
+    if (pages.length) return pages;
+    return p.explanationImageData ? [p.explanationImageData] : [];
+  }
+
   function expSrcV40() {
-    return currentProblemV40()?.explanationImageData || "";
+    const pages = expPagesV61();
+    if (!pages.length) return "";
+    view.expPageV61 = clamp(view.expPageV61, 0, pages.length - 1);
+    return pages[view.expPageV61] || "";
   }
 
   function expTextV40() {
@@ -4257,6 +4397,9 @@ setTimeout(() => {
       portal.innerHTML = `
         <div id="psatExpToolbarV40">
           <button id="psatExpCloseV40" type="button">닫기</button>
+          <button id="psatExpPrevV61" type="button">이전</button>
+          <span id="psatExpPageLabelV61">1/1</span>
+          <button id="psatExpNextV61" type="button">다음</button>
           <button id="psatExpZoomOutV40" type="button">축소</button>
           <button id="psatExpFitV40" type="button">맞춤</button>
           <button id="psatExpZoomInV40" type="button">확대</button>
@@ -4288,6 +4431,16 @@ setTimeout(() => {
   function updateLabelV40() {
     const label = q("psatExpZoomLabelV40");
     if (label) label.textContent = Math.round(view.scale * 100) + "%";
+
+    const pages = expPagesV61();
+    const total = Math.max(1, pages.length);
+    const pageLabel = q("psatExpPageLabelV61");
+    if (pageLabel) pageLabel.textContent = `${view.expPageV61 + 1}/${total}`;
+
+    const prev = q("psatExpPrevV61");
+    const next = q("psatExpNextV61");
+    if (prev) prev.disabled = pages.length <= 1 || view.expPageV61 <= 0;
+    if (next) next.disabled = pages.length <= 1 || view.expPageV61 >= pages.length - 1;
   }
 
   function applyV40() {
@@ -4333,9 +4486,36 @@ setTimeout(() => {
     applyV40();
   }
 
+  function setExplanationPageV61(index) {
+    const pages = expPagesV61();
+    if (!pages.length) return;
+
+    view.expPageV61 = clamp(Number(index || 0), 0, pages.length - 1);
+    view.touch = null;
+    view.pointers.clear();
+    view.pointerStart = null;
+
+    const img = imgV40();
+    if (img) {
+      img.onload = () => setTimeout(fitV40, 20);
+      img.src = pages[view.expPageV61];
+    }
+    updateLabelV40();
+    setTimeout(fitV40, 80);
+  }
+
   function openPortalV40(src) {
     const portal = ensurePortalV40();
     const img = imgV40();
+    const pages = expPagesV61();
+
+    if (src && pages.length) {
+      const found = pages.indexOf(src);
+      if (found >= 0) view.expPageV61 = found;
+    }
+
+    src = pages[view.expPageV61] || src || "";
+
     if (!portal || !img || !src) {
       try { showToast("해설 이미지가 없어"); } catch {}
       return;
@@ -4502,6 +4682,8 @@ setTimeout(() => {
 
   function bindPortalV40() {
     q("psatExpCloseV40") && (q("psatExpCloseV40").onclick = closePortalV40);
+    q("psatExpPrevV61") && (q("psatExpPrevV61").onclick = () => setExplanationPageV61(view.expPageV61 - 1));
+    q("psatExpNextV61") && (q("psatExpNextV61").onclick = () => setExplanationPageV61(view.expPageV61 + 1));
     q("psatExpFitV40") && (q("psatExpFitV40").onclick = fitV40);
     q("psatExpZoomInV40") && (q("psatExpZoomInV40").onclick = () => zoomAtV40(1.25));
     q("psatExpZoomOutV40") && (q("psatExpZoomOutV40").onclick = () => zoomAtV40(0.8));
@@ -4537,38 +4719,87 @@ setTimeout(() => {
   function renderExplanationV40() {
     const box = q("explanationBox");
     const p = currentProblemV40();
+
     if (!box || !p) {
       try { showToast("현재 문제가 없어"); } catch {}
       return;
     }
 
-    const src = expSrcV40();
+    const pages = expPagesV61();
     const text = expTextV40();
+
+    if (view.problemIdV61 !== String(p.id || "")) {
+      view.problemIdV61 = String(p.id || "");
+      view.expPageV61 = 0;
+    }
+
+    if (pages.length) {
+      view.expPageV61 = clamp(view.expPageV61, 0, pages.length - 1);
+    } else {
+      view.expPageV61 = 0;
+    }
+
+    const src = expSrcV40();
 
     box.classList.remove("hidden");
     box.innerHTML = "";
 
-    if (src) {
-      const btn = document.createElement("button");
-      btn.id = "expOpenFullscreenV40";
-      btn.type = "button";
-      btn.className = "secondary exp-open-btn-v40";
-      btn.textContent = "해설 전체화면으로 보기";
-      btn.addEventListener("click", (e) => {
+    if (pages.length) {
+      const nav = document.createElement("div");
+      nav.className = "exp-page-nav-v61";
+
+      const prev = document.createElement("button");
+      prev.type = "button";
+      prev.className = "secondary";
+      prev.textContent = "이전";
+      prev.disabled = view.expPageV61 <= 0;
+
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = `해설 ${view.expPageV61 + 1}/${pages.length}쪽`;
+
+      const next = document.createElement("button");
+      next.type = "button";
+      next.className = "secondary";
+      next.textContent = "다음";
+      next.disabled = view.expPageV61 >= pages.length - 1;
+
+      const fullscreen = document.createElement("button");
+      fullscreen.id = "expOpenFullscreenV40";
+      fullscreen.type = "button";
+      fullscreen.className = "secondary exp-open-btn-v40";
+      fullscreen.textContent = "전체화면";
+
+      prev.addEventListener("click", e => {
         e.preventDefault();
         e.stopPropagation();
-        openPortalV40(src);
+        view.expPageV61 = Math.max(0, view.expPageV61 - 1);
+        renderExplanationV40();
       });
-      box.appendChild(btn);
+
+      next.addEventListener("click", e => {
+        e.preventDefault();
+        e.stopPropagation();
+        view.expPageV61 = Math.min(pages.length - 1, view.expPageV61 + 1);
+        renderExplanationV40();
+      });
+
+      fullscreen.addEventListener("click", e => {
+        e.preventDefault();
+        e.stopPropagation();
+        openPortalV40(expSrcV40());
+      });
+
+      nav.append(prev, badge, next, fullscreen);
+      box.appendChild(nav);
 
       const img = document.createElement("img");
       img.className = "explanation-v40-img";
-      img.alt = "해설 이미지";
+      img.alt = `해설 ${view.expPageV61 + 1}쪽`;
       img.src = src;
       img.addEventListener("click", () => openPortalV40(src));
       box.appendChild(img);
 
-      // 해설보기 누르면 즉시 현재 fullscreen host 안에서 열기
       setTimeout(() => openPortalV40(src), 30);
     }
 
@@ -4579,11 +4810,12 @@ setTimeout(() => {
       box.appendChild(div);
     }
 
-    if (!src && !text) {
+    if (!pages.length && !text) {
       box.innerHTML = '<p class="hint">등록된 해설이 없어.</p>';
     }
 
     ensurePortalV40();
+    updateLabelV40();
   }
 
   // 기존 showExplanation 이벤트가 실행되기 전에 차단
@@ -4918,6 +5150,14 @@ setTimeout(() => {
 
 /* === v44: 채점 후 왼쪽 다음 문제 버튼 === */
 window.psatManualNextLeftV44 = true;
+/* === v61: 해설 멀티페이지
+   - 등록 시 + 해설 페이지 추가
+   - explanationImagePages 배열 저장
+   - 기존 explanationImageData는 1쪽으로 호환
+   - 풀이 후 해설 이전/다음 + 전체화면 페이지 이동
+   - v60 동기화 복구 로직 유지
+*/
+
 /* === v60: 꼬인 데이터 복구 + 정상 동기화 === */
 (function psatFirebaseSyncV60() {
   const FIREBASE_CONFIG = {

@@ -2002,3 +2002,35 @@ body > #exitSummaryOverlayV49 {
 #confirmExitSolveV49:active{
   transform:scale(.98);
 }
+
+
+/* === v61 PSAT 해설 멀티페이지 === */
+.explanation-page-controls-v61{
+  align-items:center!important;
+  margin-top:4px!important;
+}
+#explanationPageBadgeV61{
+  min-width:78px;
+  text-align:center;
+}
+.exp-page-nav-v61{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:5px;
+  flex-wrap:wrap;
+  margin:0 0 6px;
+}
+.exp-page-nav-v61 button{
+  min-height:28px;
+  padding:4px 8px;
+}
+#psatExpPageLabelV61{
+  min-width:42px;
+  text-align:center;
+  font-weight:700;
+}
+#psatExpToolbarV40 #psatExpPrevV61,
+#psatExpToolbarV40 #psatExpNextV61{
+  min-width:48px;
+}

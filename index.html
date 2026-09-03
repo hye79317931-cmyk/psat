@@ -7,7 +7,7 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=60" />
+  <link rel="stylesheet" href="styles.css?v=61" />
 </head>
 <body>
   <header class="app-header">
@@ -194,7 +194,14 @@
           </label>
           <div class="row wrap small-gap">
             <button id="pasteExplanationBtn" class="secondary" type="button">해설 스샷 붙여넣기</button>
-            <button id="clearExplanationImageBtn" class="secondary" type="button">해설 이미지 비우기</button>
+            <button id="addExplanationPageBtnV61" class="secondary" type="button">+ 해설 페이지 추가</button>
+            <button id="clearExplanationImageBtn" class="secondary" type="button">해설 전체 비우기</button>
+          </div>
+          <div id="explanationPageControlsV61" class="row wrap small-gap explanation-page-controls-v61">
+            <button id="prevExplanationPageBtnV61" class="secondary" type="button">이전</button>
+            <span id="explanationPageBadgeV61" class="badge">해설 1/1쪽</span>
+            <button id="nextExplanationPageBtnV61" class="secondary" type="button">다음</button>
+            <button id="deleteExplanationPageBtnV61" class="secondary" type="button">현재 쪽 삭제</button>
           </div>
           <img id="previewExplanationImage" class="preview hidden" alt="해설 이미지 미리보기" />
 
@@ -363,7 +370,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
-  <script src="app.js?v=60"></script>
+  <script src="app.js?v=61"></script>
 
   <div id="exitSummaryOverlayV49" class="exit-summary-overlay-v49 hidden" role="dialog" aria-modal="true" aria-labelledby="exitSummaryTitleV49">
     <div class="exit-summary-card-v49">
