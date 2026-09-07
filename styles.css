@@ -2034,3 +2034,15 @@ body > #exitSummaryOverlayV49 {
 #psatExpToolbarV40 #psatExpNextV61{
   min-width:48px;
 }
+
+
+/* === v62 목록 이동 버튼 / 중간분류 입력 안정화 === */
+#problemList .order-btn{
+  touch-action:manipulation!important;
+  pointer-events:auto!important;
+}
+#categoryInput{
+  pointer-events:auto!important;
+  user-select:text!important;
+  -webkit-user-select:text!important;
+}

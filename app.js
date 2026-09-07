@@ -1636,12 +1636,59 @@ async function moveVisibleProblem(id, delta) {
   const visible = getVisibleProblemList();
   const index = visible.findIndex((prob) => prob.id === id);
   if (index < 0) return;
+
   const targetIndex = index + delta;
   if (targetIndex < 0 || targetIndex >= visible.length) {
     showToast(delta < 0 ? '이미 맨 위 문제야' : '이미 맨 아래 문제야');
     return;
   }
-  await reorderVisibleProblems(id, visible[targetIndex].id, delta < 0);
+
+  const current = visible[index];
+  const target = visible[targetIndex];
+  if (!current || !target) return;
+
+  /*
+    v62:
+    전체 목록 order를 다시 1..N으로 매기지 않고
+    현재 문제와 바로 위/아래 문제의 order만 교환한다.
+    Firebase 실시간 동기화가 중간에 끼어도 순서가 되돌아가지 않게 함.
+  */
+  const currentOrder = problemOrderValue(current);
+  const targetOrder = problemOrderValue(target);
+  const stamp = Date.now();
+
+  current.order = targetOrder;
+  target.order = currentOrder;
+  current.updatedAt = stamp;
+  target.updatedAt = stamp;
+
+  // v60 동기화 순서 충돌 방지용 동일 순서 변경 시각.
+  current.orderModifiedAtV60 = stamp;
+  target.orderModifiedAtV60 = stamp;
+  current.canonicalOrderV60 = true;
+  target.canonicalOrderV60 = true;
+
+  await put(STORES.problems, current);
+  await put(STORES.problems, target);
+  await refresh();
+
+  // 이동 후 해당 문제 위치가 실제로 바뀌었는지 확인.
+  const after = getVisibleProblemList();
+  const afterIndex = after.findIndex((prob) => prob.id === id);
+  if (afterIndex === targetIndex) {
+    showToast(delta < 0 ? '한 칸 올렸어' : '한 칸 내렸어');
+  } else {
+    // 혹시 동일 order가 있었던 오래된 데이터면 안전하게 기존 reorder로 1회 정리.
+    const neighbor = after[targetIndex];
+    if (neighbor && neighbor.id !== id) {
+      await reorderVisibleProblems(
+        id,
+        neighbor.id,
+        delta < 0
+      );
+    }
+    showToast(delta < 0 ? '문제를 위로 이동했어' : '문제를 아래로 이동했어');
+  }
 }
 
 async function deleteProblemById(id) {
@@ -4056,7 +4103,8 @@ setTimeout(() => {
   // 혹시 submit 이벤트가 이전 함수로 묶여 있어도, 캡처 단계에서 먼저 채움
   document.addEventListener("submit", (event) => {
     if (event.target && event.target.id === "problemForm") {
-      fillIfBlank31();
+      const editing = !!document.getElementById("editingId")?.value;
+      if (!editing) fillIfBlank31();
       updateDatalist31();
     }
   }, true);
@@ -4106,7 +4154,11 @@ setTimeout(() => {
   // addView에서 빈칸으로 돌아가는 순간 계속 복구
   setInterval(() => {
     const addView = document.getElementById("addView");
-    if (addView?.classList.contains("active")) fillIfBlank31();
+    const editing = !!document.getElementById("editingId")?.value;
+    const typingCategory = document.activeElement?.id === "categoryInput";
+    if (addView?.classList.contains("active") && !editing && !typingCategory) {
+      fillIfBlank31();
+    }
   }, 500);
 })();
 
@@ -4276,7 +4328,8 @@ setTimeout(() => {
   // 저장 전에는 무조건 빈칸 채움
   document.addEventListener("submit", (event) => {
     if (event.target?.id === "problemForm") {
-      fillBlank(subj());
+      const editing = !!document.getElementById("editingId")?.value;
+      if (!editing) fillBlank(subj());
       updateDatalist();
     }
   }, true);
@@ -4310,10 +4363,32 @@ setTimeout(() => {
   document.addEventListener("click", (event) => {
     const btn = event.target?.closest?.("#saveProblemBtn, #saveOnlyBtn, #resetFormBtn, #newProblemModeBtn");
     if (!btn) return;
+
+    const editing = !!document.getElementById("editingId")?.value;
+    const isSave = btn.matches?.("#saveProblemBtn, #saveOnlyBtn");
+
+    // 기존 문제 수정 저장 시에는 사용자가 입력한 중간분류를 절대 자동복구로 덮지 않는다.
+    if (editing && isSave) {
+      updateDatalist();
+      return;
+    }
+
     const s = subj();
     fillBlank(s);
-    setTimeout(() => { fillBlank(subj()); updateDatalist(); }, 80);
-    setTimeout(() => { fillBlank(subj()); updateDatalist(); }, 350);
+    setTimeout(() => {
+      if (!document.getElementById("editingId")?.value &&
+          document.activeElement?.id !== "categoryInput") {
+        fillBlank(subj());
+      }
+      updateDatalist();
+    }, 80);
+    setTimeout(() => {
+      if (!document.getElementById("editingId")?.value &&
+          document.activeElement?.id !== "categoryInput") {
+        fillBlank(subj());
+      }
+      updateDatalist();
+    }, 350);
   }, true);
 
   if (typeof refresh === "function") {
@@ -4334,7 +4409,11 @@ setTimeout(() => {
 
   setInterval(() => {
     const add = document.getElementById("addView");
-    if (add?.classList.contains("active")) fillBlank(subj());
+    const editing = !!document.getElementById("editingId")?.value;
+    const typingCategory = document.activeElement?.id === "categoryInput";
+    if (add?.classList.contains("active") && !editing && !typingCategory) {
+      fillBlank(subj());
+    }
   }, 500);
 })();
 
@@ -6284,3 +6363,58 @@ window.psatManualNextLeftV44 = true;
 
   updateProgress();
 })();
+
+/* === v62: 목록 한칸 이동 + 중간분류 직접수정 보호 === */
+(function psatListAndCategoryFixV62(){
+  const input=()=>document.getElementById("categoryInput");
+  const editing=()=>!!document.getElementById("editingId")?.value;
+  let manualValue="";
+  let manualActive=false;
+
+  document.addEventListener("focusin",event=>{
+    if(event.target?.id!=="categoryInput")return;
+    manualActive=true;
+    manualValue=String(event.target.value||"");
+    event.target.dataset.manualEditV62="1";
+  },true);
+
+  document.addEventListener("input",event=>{
+    if(event.target?.id!=="categoryInput")return;
+    manualActive=true;
+    manualValue=String(event.target.value||"");
+
+    /*
+      빈값도 '사용자가 직접 지운 값'으로 인정한다.
+      기존 v29~v32 자동복구가 수정 중 다시 채우지 못하게 표시.
+    */
+    event.target.dataset.manualEditV62="1";
+  },true);
+
+  document.addEventListener("focusout",event=>{
+    if(event.target?.id!=="categoryInput")return;
+    manualValue=String(event.target.value||"");
+    setTimeout(()=>{ manualActive=false; },60);
+  },true);
+
+  // 기존 refresh/비동기 UI가 수정 도중 값을 되돌리면 즉시 사용자가 친 값으로 복원.
+  setInterval(()=>{
+    const el=input();
+    const add=document.getElementById("addView");
+    if(!el||!add?.classList.contains("active"))return;
+    if(!(manualActive||editing()))return;
+    if(el.dataset.manualEditV62==="1" && el.value!==manualValue){
+      el.value=manualValue;
+    }
+  },120);
+
+  // 수정 저장 직전 마지막 입력값을 확정.
+  document.addEventListener("submit",event=>{
+    if(event.target?.id!=="problemForm")return;
+    const el=input();
+    if(!el)return;
+    if(el.dataset.manualEditV62==="1"){
+      manualValue=String(el.value||"");
+    }
+  },true);
+})();
+
