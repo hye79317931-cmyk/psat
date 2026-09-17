@@ -258,3 +258,14 @@
 - categoryInput 잘못된 HTML 속성 표기 수정
 - v61 해설 멀티페이지 유지
 - v60 동기화 복구/정상화 유지
+
+
+## v63
+- 10,000+ 문제 대응: 채점/등록 hot path에서 전체 refresh 제거
+- 문제/복습 목록 60개 단위 렌더 + 더 보기
+- 문제 ID Map 인덱스
+- 백업: IndexedDB chunk read -> NDJSON stream -> gzip 단일 파일
+- Android 다운로드 URL 지연 revoke
+- File System Access 지원 시 디스크로 직접 스트리밍
+- 기존 JSON 백업 복원 호환
+- navigator.storage.persist 요청

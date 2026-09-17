@@ -2046,3 +2046,14 @@ body > #exitSummaryOverlayV49 {
   user-select:text!important;
   -webkit-user-select:text!important;
 }
+
+
+/* === v63 large bank paging === */
+.v63-load-more{
+  display:block;
+  width:min(420px,calc(100% - 24px));
+  margin:14px auto 26px;
+  min-height:44px;
+  position:relative;
+  z-index:2;
+}

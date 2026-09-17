@@ -175,7 +175,11 @@ const state = {
   syncRunning: false,
   syncApplying: false,
   tombstones: {},
-  deviceId: localStorage.getItem('psat-device-id') || ''
+  deviceId: localStorage.getItem('psat-device-id') || '',
+  problemMapV63: new Map(),
+  minOrderV63: null,
+  listLimitV63: 60,
+  reviewLimitV63: 60
 };
 
 if (!state.deviceId) {
@@ -447,9 +451,68 @@ function sortProblemsForDisplay(items) {
 }
 
 function nextOrderAtTop() {
-  const values = state.problems.map((prob) => Number(prob.order)).filter((v) => Number.isFinite(v));
-  if (values.length) return Math.min(...values) - 1;
-  return -Date.now();
+  if (Number.isFinite(state.minOrderV63)) return state.minOrderV63 - 1;
+  let min = Infinity;
+  for (const prob of state.problems) {
+    const value = Number(prob.order);
+    if (Number.isFinite(value) && value < min) min = value;
+  }
+  state.minOrderV63 = Number.isFinite(min) ? min : -Date.now();
+  return state.minOrderV63 - 1;
+}
+
+const LIST_BATCH_V63 = 60;
+
+function rebuildProblemIndexV63() {
+  state.problemMapV63 = new Map(state.problems.map((p) => [String(p.id), p]));
+  let min = Infinity;
+  for (const p of state.problems) {
+    const value = Number(p.order);
+    if (Number.isFinite(value) && value < min) min = value;
+  }
+  state.minOrderV63 = Number.isFinite(min) ? min : null;
+}
+
+function problemByIdV63(id) {
+  if (!id) return null;
+  return state.problemMapV63?.get(String(id)) || state.problems.find((p) => p.id === id) || null;
+}
+
+function upsertStateProblemV63(problem, resort = true) {
+  if (!problem?.id) return;
+  if (!state.problemMapV63) rebuildProblemIndexV63();
+  const key = String(problem.id);
+  const existing = state.problemMapV63.get(key);
+  if (existing) {
+    const index = state.problems.findIndex((p) => String(p.id) === key);
+    if (index >= 0) state.problems[index] = problem;
+  } else {
+    state.problems.push(problem);
+  }
+  state.problemMapV63.set(key, problem);
+  const order = Number(problem.order);
+  if (Number.isFinite(order)) state.minOrderV63 = Number.isFinite(state.minOrderV63) ? Math.min(state.minOrderV63, order) : order;
+  if (resort) {
+    state.problems = sortProblemsForDisplay(state.problems);
+    rebuildProblemIndexV63();
+  }
+}
+
+function updateFilterOptionsV63() {
+  fillSubjectSelect(els.subjectFilter);
+  fillSubjectSelect(els.listSubjectFilter);
+  fillSubjectSelect(els.reviewSubjectFilter);
+  fillYearSelect(els.yearFilter);
+  fillYearSelect(els.listYearFilter);
+  fillYearSelect(els.reviewYearFilter);
+  fillYearSelect(els.bulkYearSource);
+  if (typeof populateCategoryFiltersV28 === 'function') {
+    try { populateCategoryFiltersV28(); } catch {}
+  }
+}
+
+function activeViewIdV63() {
+  return els.views.find((v) => v.classList.contains('active'))?.id || '';
 }
 
 function getSubjectSet() {
@@ -473,17 +536,13 @@ function fillSubjectSelect(select, keepValue = true) {
 
 async function refresh() {
   state.problems = sortProblemsForDisplay(await getAll(STORES.problems));
-  fillSubjectSelect(els.subjectFilter);
-  fillSubjectSelect(els.listSubjectFilter);
-  fillSubjectSelect(els.reviewSubjectFilter);
-  fillYearSelect(els.yearFilter);
-  fillYearSelect(els.listYearFilter);
-  fillYearSelect(els.reviewYearFilter);
-  fillYearSelect(els.bulkYearSource);
+  rebuildProblemIndexV63();
+  updateFilterOptionsV63();
   renderEmptyState();
-  renderProblemList();
-  renderWrongList();
-  renderStats();
+  const active = activeViewIdV63();
+  if (active === 'listView') renderProblemList();
+  else if (active === 'wrongView') renderWrongList();
+  else if (active === 'statsView') renderStats();
 }
 
 function renderEmptyState() {
@@ -577,7 +636,7 @@ async function pauseCurrentSession() {
 function resumePausedSession() {
   const paused = readPausedSession();
   if (!paused) return false;
-  const queue = (paused.queueIds || []).map((id) => state.problems.find((p) => p.id === id)).filter(Boolean);
+  const queue = (paused.queueIds || []).map((id) => problemByIdV63(id)).filter(Boolean);
   if (!queue.length) {
     clearPausedSession();
     showToast('이어 풀 문제가 없어');
@@ -602,7 +661,7 @@ function resumePausedSession() {
     wrongIds: [...(savedSession.wrongIds || [])],
     solveElapsedMsV49: Math.max(0, Number(savedSession.solveElapsedMsV49 || 0))
   };
-  const current = state.problems.find((p) => p.id === paused.currentId) || queue[state.queueIndex];
+  const current = problemByIdV63(paused.currentId) || queue[state.queueIndex];
   loadCurrentProblem(current);
   state.questionStart = Date.now() - Math.max(0, Number(paused.questionElapsed || 0));
   updateTimers();
@@ -860,7 +919,9 @@ async function checkAnswer(options = {}) {
   } else {
     showExplanation();
   }
-  await refresh();
+  // v63: 채점할 때 1만+ 문제 전체를 DB에서 다시 읽고 목록 DOM까지 재생성하지 않는다.
+  // 현재 문제 객체는 state/queue에서 같은 참조를 쓰므로 통계만 이미 반영되어 있다.
+  upsertStateProblemV63(p, false);
 
   // v44: 채점 후 자동으로 다음 문제로 넘어가지 않는다.
   clearTimeout(state.autoNextTimer);
@@ -917,7 +978,7 @@ async function nextProblem() {
     return;
   }
   state.queueIndex += 1;
-  const next = state.problems.find((p) => p.id === state.queue[state.queueIndex].id) || state.queue[state.queueIndex];
+  const next = problemByIdV63(state.queue[state.queueIndex].id) || state.queue[state.queueIndex];
   loadCurrentProblem(next);
 }
 
@@ -1378,18 +1439,33 @@ function getVisibleProblemList() {
   });
 }
 
-function renderProblemList() {
+function renderProblemList(event) {
+  if (event?.type) state.listLimitV63 = LIST_BATCH_V63;
   const list = getVisibleProblemList();
   els.problemList.innerHTML = '';
   if (!list.length) {
     els.problemList.innerHTML = '<p class="hint">표시할 문제가 없어.</p>';
     return;
   }
-  list.forEach((p, index) => {
-    // 아래쪽부터 1번으로 보이도록: 맨 아래 항목 = 1번
+  const limit = Math.min(Number(state.listLimitV63 || LIST_BATCH_V63), list.length);
+  const frag = document.createDocumentFragment();
+  for (let index = 0; index < limit; index += 1) {
+    const p = list[index];
     const displayNumber = list.length - index;
-    els.problemList.appendChild(problemItem(p, false, displayNumber));
-  });
+    frag.appendChild(problemItem(p, false, displayNumber));
+  }
+  els.problemList.appendChild(frag);
+  if (limit < list.length) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'secondary v63-load-more';
+    more.textContent = `더 보기 (${limit}/${list.length})`;
+    more.addEventListener('click', () => {
+      state.listLimitV63 = Math.min(list.length, limit + LIST_BATCH_V63);
+      renderProblemList();
+    });
+    els.problemList.appendChild(more);
+  }
 }
 
 function reviewListForMode(mode) {
@@ -1421,7 +1497,8 @@ function setReviewMode(mode) {
   renderWrongList();
 }
 
-function renderWrongList() {
+function renderWrongList(event) {
+  if (event?.type) state.reviewLimitV63 = LIST_BATCH_V63;
   const mode = state.reviewMode || 'wrong';
   const list = reviewListForMode(mode);
   els.wrongList.innerHTML = '';
@@ -1436,8 +1513,18 @@ function renderWrongList() {
       : '<p class="hint">현재 복습할 오답이 없어.</p>';
     return;
   }
-  for (const p of list) {
-    els.wrongList.appendChild(problemItem(p, true, '', mode));
+  const limit = Math.min(Number(state.reviewLimitV63 || LIST_BATCH_V63), list.length);
+  const frag = document.createDocumentFragment();
+  for (let index = 0; index < limit; index += 1) {
+    frag.appendChild(problemItem(list[index], true, list.length - index, mode));
+  }
+  els.wrongList.appendChild(frag);
+  if (limit < list.length) {
+    const more = document.createElement('button');
+    more.type = 'button'; more.className = 'secondary v63-load-more';
+    more.textContent = `더 보기 (${limit}/${list.length})`;
+    more.addEventListener('click', () => { state.reviewLimitV63 = Math.min(list.length, limit + LIST_BATCH_V63); renderWrongList(); });
+    els.wrongList.appendChild(more);
   }
 }
 
@@ -2706,17 +2793,20 @@ async function saveProblemFromForm(event) {
     };
 
     await put(STORES.problems, problem);
-    await refresh();
+    // v63: 등록/수정 때 전체 IndexedDB 재조회 + 전체 목록 렌더링 금지.
+    upsertStateProblemV63(problem, true);
+    renderEmptyState();
+    updateFilterOptionsV63();
 
     if (editingId) {
       if (saveMode === 'stay') {
-        const updated = state.problems.find((p) => p.id === problem.id) || problem;
+        const updated = problemByIdV63(problem.id) || problem;
         editProblem(updated, { sequence: state.editQueueIds });
         showToast(`수정했어 · 현재 ${state.problems.length}문제`);
       } else {
         const nextId = getNextEditProblemId(problem.id);
         if (nextId) {
-          const nextProblemToEdit = state.problems.find((p) => p.id === nextId);
+          const nextProblemToEdit = problemByIdV63(nextId);
           if (nextProblemToEdit) {
             editProblem(nextProblemToEdit, { sequence: state.editQueueIds });
             showToast('수정했어 · 다음 문제로 이동했어');
@@ -2740,53 +2830,227 @@ async function saveProblemFromForm(event) {
   }
 }
 
-async function exportData() {
-  const problems = await getAll(STORES.problems);
-  const history = await getAll(STORES.history);
-  const payload = {
-    app: 'PSAT 랜덤 복습노트',
-    version: 17,
-    exportedAt: new Date().toISOString(),
-    problems,
-    history
-  };
-  const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+async function countStoreV63(storeName) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(storeName, 'readonly').objectStore(storeName).count();
+    req.onsuccess = () => resolve(Number(req.result || 0));
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function readStoreChunkV63(storeName, afterKey = null, limit = 12) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const txv = db.transaction(storeName, 'readonly');
+    const store = txv.objectStore(storeName);
+    const range = afterKey == null ? null : IDBKeyRange.lowerBound(afterKey, true);
+    const req = store.openCursor(range);
+    const rows = [];
+    let lastKey = afterKey;
+    let done = true;
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) { done = true; resolve({ rows, lastKey, done }); return; }
+      rows.push(cursor.value);
+      lastKey = cursor.key;
+      if (rows.length >= limit) { done = false; resolve({ rows, lastKey, done }); return; }
+      cursor.continue();
+    };
+  });
+}
+
+async function walkStoreV63(storeName, onRow, onProgress) {
+  let key = null, done = false, count = 0;
+  while (!done) {
+    const chunk = await readStoreChunkV63(storeName, key, 12);
+    for (const row of chunk.rows) {
+      await onRow(row);
+      count += 1;
+      if (count % 24 === 0) onProgress?.(count);
+    }
+    key = chunk.lastKey;
+    done = chunk.done || !chunk.rows.length;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return count;
+}
+
+async function putBatchNativeV63(storeName, rows) {
+  if (!rows.length) return;
+  const db = await openDb();
+  await new Promise((resolve, reject) => {
+    const txv = db.transaction(storeName, 'readwrite');
+    const store = txv.objectStore(storeName);
+    txv.oncomplete = () => resolve();
+    txv.onerror = () => reject(txv.error);
+    for (const row of rows) store.put(row);
+  });
+}
+
+function downloadBackupBlobV63(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  const stamp = new Date().toISOString().slice(0, 10);
-  a.download = `psat-backup-${stamp}.json`;
+  a.download = filename;
+  a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  // Android Chrome에서 click 직후 revoke하면 다운로드가 취소될 수 있어 충분히 늦게 해제.
+  setTimeout(() => { try { a.remove(); URL.revokeObjectURL(url); } catch {} }, 60000);
+}
+
+async function exportData() {
+  if (exportData.busy) return;
+  exportData.busy = true;
+  const btn = els.exportBtn;
+  const originalText = btn?.textContent || '백업 파일 내보내기';
+  if (btn) { btn.disabled = true; btn.textContent = '백업 준비 중...'; }
+  const stamp = new Date().toISOString().slice(0, 10);
+  const gzip = typeof CompressionStream === 'function';
+  const filename = `psat-backup-${stamp}.psatbackup${gzip ? '.gz' : ''}`;
+  let fileHandle = null;
+
+  try {
+    // 지원 브라우저에서는 사용자 선택 파일에 바로 스트리밍하여 메모리를 거의 쓰지 않는다.
+    if (typeof window.showSaveFilePicker === 'function') {
+      try {
+        fileHandle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [{ description: 'PSAT 백업', accept: { [gzip ? 'application/gzip' : 'text/plain']: [gzip ? '.gz' : '.psatbackup'] } }]
+        });
+      } catch (err) {
+        if (err?.name === 'AbortError') return;
+        fileHandle = null;
+      }
+    }
+
+    const [problemCount, historyCount] = await Promise.all([countStoreV63(STORES.problems), countStoreV63(STORES.history)]);
+    const encoder = new TextEncoder();
+    let writer, finishPromise, blobPromise = null;
+
+    if (fileHandle) {
+      const fileWritable = await fileHandle.createWritable();
+      if (gzip) {
+        const compressor = new CompressionStream('gzip');
+        finishPromise = compressor.readable.pipeTo(fileWritable);
+        writer = compressor.writable.getWriter();
+      } else {
+        writer = { write: (data) => fileWritable.write(data), close: () => fileWritable.close() };
+      }
+    } else {
+      const transform = gzip ? new CompressionStream('gzip') : new TransformStream();
+      blobPromise = new Response(transform.readable).blob();
+      writer = transform.writable.getWriter();
+    }
+
+    const writeLine = (obj) => writer.write(encoder.encode(JSON.stringify(obj) + '\n'));
+    await writeLine({
+      type: 'meta', format: 'psat-ndjson-v63', version: 63,
+      exportedAt: new Date().toISOString(), problems: problemCount, history: historyCount
+    });
+
+    if (btn) btn.textContent = `문제 백업 0/${problemCount}`;
+    await walkStoreV63(STORES.problems,
+      (row) => writeLine({ type: 'problem', data: row }),
+      (n) => { if (btn) btn.textContent = `문제 백업 ${n}/${problemCount}`; }
+    );
+
+    if (btn) btn.textContent = `풀이기록 백업 0/${historyCount}`;
+    await walkStoreV63(STORES.history,
+      (row) => writeLine({ type: 'history', data: row }),
+      (n) => { if (btn) btn.textContent = `풀이기록 백업 ${n}/${historyCount}`; }
+    );
+    await writeLine({ type: 'end', problems: problemCount, history: historyCount });
+    await writer.close();
+
+    if (finishPromise) await finishPromise;
+    if (blobPromise) {
+      const blob = await blobPromise;
+      downloadBackupBlobV63(blob, filename);
+    }
+    showToast(`백업 완료 · ${problemCount}문제 · ${historyCount}기록`);
+  } catch (err) {
+    console.error('v63 backup failed', err);
+    showToast(`백업 실패 · ${String(err?.message || err || '오류')}`);
+  } finally {
+    exportData.busy = false;
+    if (btn) { btn.disabled = false; btn.textContent = originalText; }
+  }
+}
+
+async function importNdjsonV63(file, gzip) {
+  if (gzip && typeof DecompressionStream !== 'function') throw new Error('이 브라우저는 압축 백업 복원을 지원하지 않아');
+  let stream = file.stream();
+  if (gzip) stream = stream.pipeThrough(new DecompressionStream('gzip'));
+  stream = stream.pipeThrough(new TextDecoderStream());
+  const reader = stream.getReader();
+  let buffer = '';
+  let problemBatch = [], historyBatch = [];
+  let problems = 0, history = 0;
+
+  async function flush() {
+    if (problemBatch.length) { await putBatchNativeV63(STORES.problems, problemBatch); problemBatch = []; }
+    if (historyBatch.length) { await putBatchNativeV63(STORES.history, historyBatch); historyBatch = []; }
+  }
+  async function consume(line) {
+    if (!line.trim()) return;
+    const item = JSON.parse(line);
+    if (item.type === 'problem' && item.data?.id) { problemBatch.push(item.data); problems += 1; }
+    else if (item.type === 'history' && item.data?.id) { historyBatch.push(item.data); history += 1; }
+    if (problemBatch.length + historyBatch.length >= 24) {
+      await flush();
+      if ((problems + history) % 120 === 0) showToast(`복원 중 · 문제 ${problems} · 기록 ${history}`);
+    }
+  }
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += value;
+    let idx;
+    while ((idx = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, idx); buffer = buffer.slice(idx + 1);
+      await consume(line);
+    }
+  }
+  if (buffer.trim()) await consume(buffer);
+  await flush();
+  return { problems, history };
 }
 
 async function importData(event) {
   const file = event.target.files[0];
   if (!file) return;
-  if (!confirm('백업 파일을 불러오면 같은 ID의 문제는 덮어씁니다. 진행할까?')) return;
-  const text = await file.text();
-  let payload;
+  if (!confirm('백업 파일을 불러오면 같은 ID의 문제는 덮어씁니다. 진행할까?')) { event.target.value = ''; return; }
   try {
-    payload = JSON.parse(text);
+    const magic = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+    const gzip = magic[0] === 0x1f && magic[1] === 0x8b;
+    const isNew = gzip || /\.psatbackup(?:\.gz)?$/i.test(file.name) || /\.jsonl$/i.test(file.name);
+    let result;
+    if (isNew) {
+      result = await importNdjsonV63(file, gzip);
+    } else {
+      // 기존 JSON 백업도 계속 호환.
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      if (!Array.isArray(payload.problems)) throw new Error('올바른 백업 파일이 아니야');
+      for (let i = 0; i < payload.problems.length; i += 24) await putBatchNativeV63(STORES.problems, payload.problems.slice(i, i + 24));
+      if (Array.isArray(payload.history)) {
+        for (let i = 0; i < payload.history.length; i += 48) await putBatchNativeV63(STORES.history, payload.history.slice(i, i + 48));
+      }
+      result = { problems: payload.problems.length, history: payload.history?.length || 0 };
+    }
+    await refresh();
+    showToast(`복원 완료 · ${result.problems}문제 · ${result.history}기록`);
   } catch (err) {
-    showToast('JSON 파일을 읽지 못했어');
-    return;
+    console.error('v63 import failed', err);
+    showToast(`복원 실패 · ${String(err?.message || err || '파일 오류')}`);
+  } finally {
+    event.target.value = '';
   }
-  if (!Array.isArray(payload.problems)) {
-    showToast('올바른 백업 파일이 아니야');
-    return;
-  }
-  for (const p of payload.problems) await put(STORES.problems, p);
-  if (Array.isArray(payload.history)) {
-    for (const h of payload.history) await put(STORES.history, h);
-  }
-  event.target.value = '';
-  await refresh();
-  showToast('복원 완료');
 }
-
 
 function guessGitHubDefaults() {
   const host = location.hostname || '';
@@ -3347,6 +3611,8 @@ async function init() {
   localStorage.removeItem('psat-sync-config');
   localStorage.removeItem('psat-sync-tombstones');
   await openDb();
+  // v63: 대용량 문제은행이 브라우저 저장공간 정리 대상이 되지 않도록 영구 저장을 요청.
+  try { await navigator.storage?.persist?.(); } catch {}
   await refresh();
   updateContinueButton();
   await registerServiceWorker();
@@ -3774,8 +4040,6 @@ const refreshV28Original = refresh;
 refresh = async function() {
   await refreshV28Original();
   populateCategoryFiltersV28();
-  renderProblemList();
-  renderWrongList();
 };
 function bindMidCategoryEventsV28() {
   $("categoryInput")?.addEventListener("input", saveFormPreferences);
@@ -5172,7 +5436,8 @@ setTimeout(() => {
 
 /* === v43: 복습 분류 선택 시 해당 분류 안에서 번호 다시 매기기 === */
 (function reviewFilteredSequenceV43() {
-  renderWrongList = function() {
+  renderWrongList = function(event) {
+    if (event?.type) state.reviewLimitV63 = LIST_BATCH_V63;
     const mode = state.reviewMode || "wrong";
     const list = reviewListForMode(mode);
     els.wrongList.innerHTML = "";
@@ -5181,13 +5446,10 @@ setTimeout(() => {
       const subject = els.reviewSubjectFilter?.value || "전체";
       const category = $("reviewCategoryFilter")?.value || "전체";
       const year = els.reviewYearFilter?.value || els.reviewYearTextFilter?.value || "전체";
-
       let modeLabel = "오답복습";
       if (mode === "correct") modeLabel = "정답복습";
       if (mode === "unseen") modeLabel = "안 푼 문제";
-
-      els.reviewListTitle.textContent =
-        `${modeLabel} · 대분류 ${subject} · 중간분류 ${category} · 연도/회차 ${year}`;
+      els.reviewListTitle.textContent = `${modeLabel} · 대분류 ${subject} · 중간분류 ${category} · 연도/회차 ${year}`;
     }
 
     if (!list.length) {
@@ -5198,14 +5460,24 @@ setTimeout(() => {
       return;
     }
 
-    list.forEach((p, index) => {
-      // 현재 선택된 분류 결과 안에서 다시 순번 부여.
-      // 기존 목록 탭 규칙과 같이 화면 아래쪽이 1번.
+    const limit = Math.min(Number(state.reviewLimitV63 || LIST_BATCH_V63), list.length);
+    const frag = document.createDocumentFragment();
+    for (let index = 0; index < limit; index += 1) {
       const displayNumber = list.length - index;
-      els.wrongList.appendChild(
-        problemItem(p, true, displayNumber, mode)
-      );
-    });
+      frag.appendChild(problemItem(list[index], true, displayNumber, mode));
+    }
+    els.wrongList.appendChild(frag);
+    if (limit < list.length) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "secondary v63-load-more";
+      more.textContent = `더 보기 (${limit}/${list.length})`;
+      more.addEventListener("click", () => {
+        state.reviewLimitV63 = Math.min(list.length, limit + LIST_BATCH_V63);
+        renderWrongList();
+      });
+      els.wrongList.appendChild(more);
+    }
   };
 
   $("reviewSubjectFilter")?.addEventListener("change", () => {
@@ -6418,3 +6690,13 @@ window.psatManualNextLeftV44 = true;
   },true);
 })();
 
+
+
+/* === v63: 10,000+ 문제 성능/백업 ===
+   - 채점/등록 시 전체 refresh 제거
+   - 문제/복습 목록 60개 단위 렌더
+   - id->problem Map 인덱스
+   - 대용량 백업 NDJSON 스트리밍 + gzip
+   - 기존 JSON 백업 복원 호환
+*/
+window.psatLargeBankV63 = true;

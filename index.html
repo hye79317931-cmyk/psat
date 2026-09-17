@@ -7,7 +7,7 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=62" />
+  <link rel="stylesheet" href="styles.css?v=63" />
 </head>
 <body>
   <header class="app-header">
@@ -323,7 +323,7 @@
         <div class="row wrap">
           <button id="exportBtn" type="button">백업 파일 내보내기</button>
           <label class="file-button">백업 파일 불러오기
-            <input id="importInput" type="file" accept="application/json" />
+            <input id="importInput" type="file" accept=".json,.jsonl,.psatbackup,.gz,application/json,application/gzip,text/plain" />
           </label>
         </div>
         <p class="hint">폰 교체, 브라우저 데이터 삭제 전에 반드시 백업해. 복원은 같은 앱에서 JSON 파일을 선택하면 됩니다.</p>
@@ -370,7 +370,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
-  <script src="app.js?v=62"></script>
+  <script src="app.js?v=63"></script>
 
   <div id="exitSummaryOverlayV49" class="exit-summary-overlay-v49 hidden" role="dialog" aria-modal="true" aria-labelledby="exitSummaryTitleV49">
     <div class="exit-summary-card-v49">
