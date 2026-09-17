@@ -2057,3 +2057,19 @@ body > #exitSummaryOverlayV49 {
   position:relative;
   z-index:2;
 }
+
+/* === v65 대용량 분할 백업 === */
+.backup-parts-v65{
+  margin-top:10px;
+  padding:10px;
+  border:1px solid var(--line,#d7dce3);
+  border-radius:10px;
+}
+.backup-parts-v65.hidden{display:none!important}
+.backup-parts-v65 .backup-part-list-v65{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:8px;
+}
+.backup-parts-v65 button{min-height:38px}

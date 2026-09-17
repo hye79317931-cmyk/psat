@@ -1,1 +1,1 @@
-PSAT v64 backup OPFS streaming + lightweight Firebase progress sync
+PSAT v65 split backup + lightweight indexed Firebase sync

@@ -279,3 +279,19 @@
 - 채점/필기/통계/순서/다시보기는 progress 경로로 소형 동기화
 - 수동 전체 업로드도 내용이 같은 문제 이미지는 재업로드하지 않음
 - v60 복구, v61 다중 해설, v62 중간분류, v63 대용량 렌더링 유지
+
+
+## v65
+- 백업 gzip 제거: JPEG/PNG base64 재압축 CPU 낭비 제거
+- 백업 48MB 단위 분할 파일(.psatpart), OPFS 디스크 스트리밍
+- 생성 후 다운로드 버튼 표시, 여러 파트 동시선택 복원
+- Firebase normal startup no longer downloads entire /problems tree
+- lightweight problemIndex + progress/history/deletion sync
+- only missing/newer problem content fetched one row at a time
+- new/edited problem content uploads full row + index; solving/ink/stat changes upload progress only
+- v65 put path no longer JSON.stringify/hash large images on every solve
+- manual upload batches progress writes and only uploads changed problem bodies
+- v60 full recovery retained as explicit repair action only
+
+- Direct File System Access save when browser supports it; otherwise 48MB OPFS parts.
+- Explanation first image duplicate removed only inside backup and restored on import.
