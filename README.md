@@ -269,3 +269,13 @@
 - File System Access 지원 시 디스크로 직접 스트리밍
 - 기존 JSON 백업 복원 호환
 - navigator.storage.persist 요청
+
+
+## v64
+- Android 대용량 백업: OPFS 디스크 스트리밍 후 다운로드
+- 백업 중 거대한 RAM Blob 생성을 피함
+- Firebase 조각 110k, timeout 90초, retry 4회
+- 문제 이미지/해설 이미지는 내용 변경 시에만 전체 동기화
+- 채점/필기/통계/순서/다시보기는 progress 경로로 소형 동기화
+- 수동 전체 업로드도 내용이 같은 문제 이미지는 재업로드하지 않음
+- v60 복구, v61 다중 해설, v62 중간분류, v63 대용량 렌더링 유지

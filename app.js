@@ -2907,73 +2907,116 @@ async function exportData() {
   const btn = els.exportBtn;
   const originalText = btn?.textContent || '백업 파일 내보내기';
   if (btn) { btn.disabled = true; btn.textContent = '백업 준비 중...'; }
-  const stamp = new Date().toISOString().slice(0, 10);
-  const gzip = typeof CompressionStream === 'function';
+
+  const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
+  const canGzip = typeof CompressionStream === 'function';
+  const gzip = canGzip;
   const filename = `psat-backup-${stamp}.psatbackup${gzip ? '.gz' : ''}`;
-  let fileHandle = null;
+  let tempRoot = null;
+  let tempHandle = null;
 
   try {
-    // 지원 브라우저에서는 사용자 선택 파일에 바로 스트리밍하여 메모리를 거의 쓰지 않는다.
-    if (typeof window.showSaveFilePicker === 'function') {
+    const [problemCount, historyCount] = await Promise.all([
+      countStoreV63(STORES.problems),
+      countStoreV63(STORES.history)
+    ]);
+    const encoder = new TextEncoder();
+
+    let writer = null;
+    let finishPromise = null;
+    let finalFile = null;
+    let blobPromise = null;
+
+    /*
+      v64: Android에서 거대한 백업을 RAM Blob으로 만들지 않는다.
+      OPFS(브라우저 디스크)에 바로 스트리밍 → 완성된 File을 다운로드.
+      1만+ 문제/이미지에서도 메모리 폭증을 피한다.
+    */
+    if (navigator.storage?.getDirectory) {
       try {
-        fileHandle = await window.showSaveFilePicker({
-          suggestedName: filename,
-          types: [{ description: 'PSAT 백업', accept: { [gzip ? 'application/gzip' : 'text/plain']: [gzip ? '.gz' : '.psatbackup'] } }]
-        });
-      } catch (err) {
-        if (err?.name === 'AbortError') return;
-        fileHandle = null;
+        tempRoot = await navigator.storage.getDirectory();
+        const tempName = `psat-v64-export-${Date.now()}.tmp`;
+        tempHandle = await tempRoot.getFileHandle(tempName, { create: true });
+        const writable = await tempHandle.createWritable();
+
+        if (gzip) {
+          const compressor = new CompressionStream('gzip');
+          finishPromise = compressor.readable.pipeTo(writable);
+          writer = compressor.writable.getWriter();
+        } else {
+          writer = {
+            write: (data) => writable.write(data),
+            close: () => writable.close()
+          };
+        }
+
+        finalFile = async () => tempHandle.getFile();
+      } catch (opfsErr) {
+        console.warn('v64 OPFS backup fallback', opfsErr);
+        writer = null;
+        finishPromise = null;
+        tempRoot = null;
+        tempHandle = null;
       }
     }
 
-    const [problemCount, historyCount] = await Promise.all([countStoreV63(STORES.problems), countStoreV63(STORES.history)]);
-    const encoder = new TextEncoder();
-    let writer, finishPromise, blobPromise = null;
-
-    if (fileHandle) {
-      const fileWritable = await fileHandle.createWritable();
-      if (gzip) {
-        const compressor = new CompressionStream('gzip');
-        finishPromise = compressor.readable.pipeTo(fileWritable);
-        writer = compressor.writable.getWriter();
-      } else {
-        writer = { write: (data) => fileWritable.write(data), close: () => fileWritable.close() };
-      }
-    } else {
+    // OPFS 미지원 브라우저만 기존 스트림->Blob 방식으로 폴백.
+    if (!writer) {
       const transform = gzip ? new CompressionStream('gzip') : new TransformStream();
       blobPromise = new Response(transform.readable).blob();
       writer = transform.writable.getWriter();
+      finalFile = async () => blobPromise;
     }
 
-    const writeLine = (obj) => writer.write(encoder.encode(JSON.stringify(obj) + '\n'));
+    const writeLine = async (obj) => {
+      const line = encoder.encode(JSON.stringify(obj) + '\n');
+      await writer.write(line);
+    };
+
     await writeLine({
-      type: 'meta', format: 'psat-ndjson-v63', version: 63,
-      exportedAt: new Date().toISOString(), problems: problemCount, history: historyCount
+      type: 'meta',
+      format: 'psat-ndjson-v64',
+      version: 64,
+      exportedAt: new Date().toISOString(),
+      problems: problemCount,
+      history: historyCount
     });
 
     if (btn) btn.textContent = `문제 백업 0/${problemCount}`;
-    await walkStoreV63(STORES.problems,
+    await walkStoreV63(
+      STORES.problems,
       (row) => writeLine({ type: 'problem', data: row }),
       (n) => { if (btn) btn.textContent = `문제 백업 ${n}/${problemCount}`; }
     );
 
     if (btn) btn.textContent = `풀이기록 백업 0/${historyCount}`;
-    await walkStoreV63(STORES.history,
+    await walkStoreV63(
+      STORES.history,
       (row) => writeLine({ type: 'history', data: row }),
       (n) => { if (btn) btn.textContent = `풀이기록 백업 ${n}/${historyCount}`; }
     );
+
     await writeLine({ type: 'end', problems: problemCount, history: historyCount });
     await writer.close();
-
     if (finishPromise) await finishPromise;
-    if (blobPromise) {
-      const blob = await blobPromise;
-      downloadBackupBlobV63(blob, filename);
+
+    if (btn) btn.textContent = '다운로드 여는 중...';
+    const fileOrBlob = await finalFile();
+    downloadBackupBlobV63(fileOrBlob, filename);
+
+    // 다운로드가 파일을 잡을 시간을 충분히 준 뒤 OPFS 임시파일 제거.
+    if (tempRoot && tempHandle) {
+      const tmpName = tempHandle.name;
+      setTimeout(() => {
+        tempRoot.removeEntry(tmpName).catch(() => {});
+      }, 5 * 60 * 1000);
     }
+
     showToast(`백업 완료 · ${problemCount}문제 · ${historyCount}기록`);
   } catch (err) {
-    console.error('v63 backup failed', err);
-    showToast(`백업 실패 · ${String(err?.message || err || '오류')}`);
+    console.error('v64 backup failed', err);
+    const msg = String(err?.message || err || '오류');
+    showToast(`백업 실패 · ${msg}`);
   } finally {
     exportData.busy = false;
     if (btn) { btn.disabled = false; btn.textContent = originalText; }
@@ -5525,14 +5568,15 @@ window.psatManualNextLeftV44 = true;
   const SYNC_SCHEMA=60;
   const LAST_EMAIL_KEY="psat-firebase-email-v46";
   const REPAIR_LOCAL_PREFIX="psat-sync-repair-v60:";
-  const CHUNK_SIZE=220000;
-  const WRITE_TIMEOUT_MS=35000;
-  const RETRIES=3;
+  const CHUNK_SIZE=110000;
+  const WRITE_TIMEOUT_MS=90000;
+  const RETRIES=4;
+  const PERF_SYNC_SCHEMA=64;
 
   let app=null,auth=null,db=null,user=null;
   let applyingRemote=false,fullPushRunning=false,repairRunning=false,uiBound=false;
   let dirtyTimer=null,dirtyRunning=false,refreshTimer=null;
-  let problemsRef=null,historyRef=null,deletionsRef=null;
+  let problemsRef=null,historyRef=null,deletionsRef=null,progressRefV64=null;
   const dirty=new Map();
 
   const el=id=>document.getElementById(id);
@@ -5602,6 +5646,69 @@ window.psatManualNextLeftV44 = true;
     try{return JSON.stringify(a)===JSON.stringify(b);}catch{return false;}
   }
 
+  function problemContentFingerprintV64(row){
+    if(!row)return "";
+    const content={
+      id:row.id, subject:row.subject, year:row.year, category:row.category,
+      answer:row.answer, difficulty:row.difficulty,
+      imageData:row.imageData,
+      explanation:row.explanation,
+      explanationImageData:row.explanationImageData,
+      explanationImagePages:row.explanationImagePages,
+      tags:row.tags,
+      createdAt:row.createdAt
+    };
+    try{return hashText(JSON.stringify(content));}catch{return "";}
+  }
+
+  function progressFromProblemV64(row){
+    return {
+      id:String(row?.id||""),
+      attempts:Number(row?.attempts||0),
+      correct:Number(row?.correct||0),
+      wrong:Number(row?.wrong||0),
+      totalTimeMs:Number(row?.totalTimeMs||0),
+      lastTimeMs:Number(row?.lastTimeMs||0),
+      lastAnsweredAt:Number(row?.lastAnsweredAt||0),
+      lastResult:row?.lastResult||"",
+      wrongActive:!!row?.wrongActive,
+      correctStreak:Number(row?.correctStreak||0),
+      flagged:!!row?.flagged,
+      annotations:Array.isArray(row?.annotations)?row.annotations:[],
+      order:Number(row?.order),
+      canonicalOrderV60:row?.canonicalOrderV60===true,
+      orderModifiedAtV60:Number(row?.orderModifiedAtV60||0),
+      progressUpdatedAtV64:Number(row?.progressUpdatedAtV64||row?.syncModifiedAtV60||Date.now()),
+      syncSchemaV64:PERF_SYNC_SCHEMA
+    };
+  }
+
+  function applyProgressFieldsV64(local,progress){
+    if(!local||!progress)return local;
+    const localStamp=Number(local.progressUpdatedAtV64||0);
+    const remoteStamp=Number(progress.progressUpdatedAtV64||0);
+    if(localStamp>remoteStamp)return local;
+    const merged={...local};
+    for(const k of [
+      "attempts","correct","wrong","totalTimeMs","lastTimeMs","lastAnsweredAt",
+      "lastResult","wrongActive","correctStreak","flagged","annotations",
+      "order","canonicalOrderV60","orderModifiedAtV60"
+    ]){
+      if(progress[k]!==undefined)merged[k]=progress[k];
+    }
+    merged.progressUpdatedAtV64=remoteStamp;
+    return merged;
+  }
+
+  async function uploadProgressV64(row,label="진행상태"){
+    if(!row?.id)return;
+    const progress=progressFromProblemV64(row);
+    await retryWrite(
+      ()=>db.ref(`${ROOT}/${user.uid}/progress/${keyOf(row.id)}`).set(progress),
+      label
+    );
+  }
+
   async function uploadOne(path,row,label){
     const ref=db.ref(`${ROOT}/${user.uid}/${path}/${keyOf(row.id)}`);
     const text=JSON.stringify(row);
@@ -5627,6 +5734,12 @@ window.psatManualNextLeftV44 = true;
       );
     }
     await retryWrite(()=>db.ref(`${ROOT}/${user.uid}/${path}/${keyOf(id)}`).remove(),label);
+    if(path==="problems"){
+      await retryWrite(
+        ()=>db.ref(`${ROOT}/${user.uid}/progress/${keyOf(id)}`).remove(),
+        "진행상태 삭제"
+      );
+    }
   }
 
   function parseChunks(value,allowIncomplete=false){
@@ -5806,15 +5919,17 @@ window.psatManualNextLeftV44 = true;
   }
 
   async function cloudSnapshots(repair=false){
-    const [ps,hs,ds,meta]=await Promise.all([
+    const [ps,hs,ds,meta,pg]=await Promise.all([
       withTimeout(db.ref(`${ROOT}/${user.uid}/problems`).once('value'),WRITE_TIMEOUT_MS,'문제 받기'),
       withTimeout(db.ref(`${ROOT}/${user.uid}/history`).once('value'),WRITE_TIMEOUT_MS,'기록 받기'),
       withTimeout(db.ref(`${ROOT}/${user.uid}/_deletions/problems`).once('value'),WRITE_TIMEOUT_MS,'삭제기록 받기'),
-      withTimeout(db.ref(`${ROOT}/${user.uid}/_meta`).once('value'),WRITE_TIMEOUT_MS,'메타 확인')
+      withTimeout(db.ref(`${ROOT}/${user.uid}/_meta`).once('value'),WRITE_TIMEOUT_MS,'메타 확인'),
+      withTimeout(db.ref(`${ROOT}/${user.uid}/progress`).once('value'),WRITE_TIMEOUT_MS,'진행상태 받기')
     ]);
     return {
       problems:decodeCollection(ps.val(),repair),
       history:decodeCollection(hs.val(),repair),
+      progressRaw:pg.val()||{},
       deletionRaw:ds.val()||{},
       meta:meta.val()||{},
       rawProblems:ps.val()||{},
@@ -5861,6 +5976,16 @@ window.psatManualNextLeftV44 = true;
           changed=true;
         }
       }
+      for(const progress of Object.values(cloud.progressRaw||{})){
+        if(!progress?.id)continue;
+        const local=await nativeGet(STORES.problems,progress.id);
+        if(!local)continue;
+        const merged=applyProgressFieldsV64(local,progress);
+        if(!sameJson(local,merged)){
+          await nativePut(STORES.problems,merged);
+          changed=true;
+        }
+      }
       for(const marker of Object.values(cloud.deletionRaw)){
         if(await applyDeletionMarker(marker))changed=true;
       }
@@ -5879,7 +6004,19 @@ window.psatManualNextLeftV44 = true;
       const old=cloudRaw[keyOf(row.id)];
       const text=JSON.stringify(row);
       const fp=hashText(text);
+
+      let sameEnough=false;
       if(old&&(old.__v48===1||old.__v47===1)&&old.complete===true&&old.fingerprint===fp){
+        sameEnough=true;
+      }else if(path==="problems"&&old){
+        const oldRow=decodeRowForRepair(old);
+        if(oldRow&&problemContentFingerprintV64(oldRow)===problemContentFingerprintV64(row)){
+          // 풀이통계/필기만 달라진 경우 거대한 문제이미지는 다시 올리지 않는다.
+          sameEnough=true;
+        }
+      }
+
+      if(sameEnough){
         status(`${label} 확인 · ${i+1}/${rows.length}`);
         continue;
       }
@@ -5962,6 +6099,11 @@ window.psatManualNextLeftV44 = true;
       const rows=await getAll(STORES.problems);
       const histories=await getAll(STORES.history);
       await uploadRowsSafe('problems',rows,cloud.rawProblems,'문제');
+      for(let i=0;i<rows.length;i++){
+        status(`진행상태 저장 · ${i+1}/${rows.length}`);
+        await uploadProgressV64(rows[i],`진행상태 ${i+1}/${rows.length}`);
+        if(i%20===19)await sleep(0);
+      }
       await uploadRowsSafe('history',histories,cloud.rawHistory,'풀이기록');
       await retryWrite(()=>db.ref(`${ROOT}/${user.uid}/_meta`).update({
         updatedAt:firebase.database.ServerValue.TIMESTAMP,
@@ -5975,7 +6117,7 @@ window.psatManualNextLeftV44 = true;
 
   function queueDirty(storeName,action,id,row){
     if(!user||applyingRemote||fullPushRunning||repairRunning)return;
-    const path=pathForStore(storeName);
+    const path=action==="progress"?"progress":pathForStore(storeName);
     if(!path||!id)return;
     dirty.set(`${storeName}:${id}`,{storeName,path,action,id,row});
     clearTimeout(dirtyTimer);
@@ -5991,6 +6133,7 @@ window.psatManualNextLeftV44 = true;
         const j=jobs[i];
         status(`변경사항 동기화 · ${i+1}/${jobs.length}`);
         if(j.action==='remove')await removeOne(j.path,j.id,'삭제 동기화');
+        else if(j.action==='progress')await uploadProgressV64(j.row,'진행상태 동기화');
         else await uploadOne(j.path,j.row,'변경사항');
       }
       status(`실시간 동기화됨 · ${state.problems?.length||0}문제`,true);
@@ -6005,15 +6148,37 @@ window.psatManualNextLeftV44 = true;
   const basePut=put,baseRemove=remove,baseClearStore=clearStore;
 
   put=async function(storeName,value){
+    let oldProblemV64=null;
+    let contentChangedV64=true;
+
     if(storeName===STORES.problems&&value&&!applyingRemote){
+      try{oldProblemV64=await nativeGet(STORES.problems,value.id);}catch{}
+      if(oldProblemV64){
+        contentChangedV64=
+          problemContentFingerprintV64(oldProblemV64)!==problemContentFingerprintV64(value);
+      }
+
       const now=Date.now();
       value.syncModifiedAtV60=now;
       value.syncSchemaV60=SYNC_SCHEMA;
-      value.orderModifiedAtV60=now;
-      value.canonicalOrderV60=true;
+      value.progressUpdatedAtV64=now;
+      value.syncSchemaV64=PERF_SYNC_SCHEMA;
+
+      // 순서가 실제로 바뀐 경우에만 order stamp를 갱신.
+      if(!oldProblemV64 || Number(oldProblemV64.order)!==Number(value.order)){
+        value.orderModifiedAtV60=now;
+        value.canonicalOrderV60=true;
+      }
     }
+
     const result=await basePut(storeName,value);
-    if(!applyingRemote)queueDirty(storeName,'put',value?.id,value);
+    if(!applyingRemote){
+      if(storeName===STORES.problems&&value&&!contentChangedV64){
+        queueDirty(storeName,'progress',value.id,value);
+      }else{
+        queueDirty(storeName,'put',value?.id,value);
+      }
+    }
     return result;
   };
 
@@ -6066,6 +6231,24 @@ window.psatManualNextLeftV44 = true;
     }finally{applyingRemote=false;}
   }
 
+
+  async function applyRemoteProgressV64(snap){
+    if(fullPushRunning||dirtyRunning||repairRunning)return;
+    const remote=snap.val();
+    if(!remote?.id)return;
+    applyingRemote=true;
+    try{
+      const local=await nativeGet(STORES.problems,remote.id);
+      if(!local)return;
+      const merged=applyProgressFieldsV64(local,remote);
+      if(!sameJson(local,merged)){
+        await nativePut(STORES.problems,merged);
+        // 풀이화면을 방해하지 않도록 목록 전체 refresh는 짧게 묶어서 실행.
+        scheduleRefresh();
+      }
+    }finally{applyingRemote=false;}
+  }
+
   async function applyRemoteDeletion(snap){
     if(fullPushRunning||dirtyRunning||repairRunning)return;
     if(await applyDeletionMarker(snap.val()))scheduleRefresh();
@@ -6075,7 +6258,8 @@ window.psatManualNextLeftV44 = true;
     if(problemsRef)problemsRef.off();
     if(historyRef)historyRef.off();
     if(deletionsRef)deletionsRef.off();
-    problemsRef=historyRef=deletionsRef=null;
+    if(progressRefV64)progressRefV64.off();
+    problemsRef=historyRef=deletionsRef=progressRefV64=null;
   }
 
   function startRemote(){
@@ -6084,11 +6268,14 @@ window.psatManualNextLeftV44 = true;
     problemsRef=db.ref(`${ROOT}/${user.uid}/problems`);
     historyRef=db.ref(`${ROOT}/${user.uid}/history`);
     deletionsRef=db.ref(`${ROOT}/${user.uid}/_deletions/problems`);
+    progressRefV64=db.ref(`${ROOT}/${user.uid}/progress`);
 
     problemsRef.on('child_added',snap=>applyRemoteProblem(snap).catch(console.warn));
     problemsRef.on('child_changed',snap=>applyRemoteProblem(snap).catch(console.warn));
     historyRef.on('child_added',snap=>applyRemoteHistory(snap).catch(console.warn));
     historyRef.on('child_changed',snap=>applyRemoteHistory(snap).catch(console.warn));
+    progressRefV64.on('child_added',snap=>applyRemoteProgressV64(snap).catch(console.warn));
+    progressRefV64.on('child_changed',snap=>applyRemoteProgressV64(snap).catch(console.warn));
     deletionsRef.on('child_added',snap=>applyRemoteDeletion(snap).catch(console.warn));
     deletionsRef.on('child_changed',snap=>applyRemoteDeletion(snap).catch(console.warn));
     // child_removed만으로는 절대 로컬 문제 삭제하지 않음.
