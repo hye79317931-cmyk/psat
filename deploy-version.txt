@@ -1,1 +1,1 @@
-PSAT v70 solve-source recovery: fixes all/unseen/wrong all showing zero by restoring problem source independently of large history sync
+PSAT v71 direct-solve fix: uses the same in-memory problem bank as the 720-item list and bypasses the broken solve filter/start wrapper chain

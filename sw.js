@@ -1,11 +1,11 @@
 'use strict';
 
-const CACHE_NAME = 'psat-random-note-v70';
+const CACHE_NAME = 'psat-random-note-v71';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css?v=70',
-  './app.js?v=70',
+  './styles.css?v=71',
+  './app.js?v=71',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png'
@@ -31,8 +31,8 @@ self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   event.respondWith(
     caches.match(event.request).then((cached) => {
-      if (cached && !event.request.mode.includes('navigate') && !event.request.url.endsWith('/index.html')) return cached;
-      return fetch(event.request, { cache: 'no-store' }).then((response) => {
+      if (cached && !event.request.url.endsWith('/index.html')) return cached;
+      return fetch(event.request).then((response) => {
         const clone = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         return response;
