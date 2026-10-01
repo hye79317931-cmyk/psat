@@ -6969,6 +6969,125 @@ window.psatManualNextLeftV44 = true;
     return {ok:Number(state.problems?.length||0)>0,count:Number(state.problems?.length||0)};
   };
 
+  /*
+    v70: 문제풀이용 '문제 본문 전용' 복구.
+    기존 fastSyncV65는 problemIndex와 함께 progress/history까지 먼저 읽으므로
+    풀이기록이 커진 계정에서는 history 단계에서 타임아웃되어 문제 본문을 받기 전에
+    동기화 전체가 실패할 수 있었다.
+
+    이 진입점은 오직 로컬 문제은행이 0개일 때만 사용하며:
+    1) problemIndex만 단독 조회
+    2) 인덱스의 ID별로 문제 본문만 내려받음
+    3) 인덱스가 없는 구버전 계정은 /problems 를 작은 key 구간으로 나눠 복구
+    한다. history/progress는 건드리지 않고, 클라우드 데이터도 삭제/덮어쓰기 하지 않는다.
+  */
+  window.psatForceCloudProblemsV70=async function(){
+    if(!user||!db){
+      return {ok:false,count:Number(state.problems?.length||0),reason:"not-logged-in"};
+    }
+
+    let localCount=0;
+    try{localCount=await countStoreV63(STORES.problems);}catch{}
+    if(localCount>0){
+      try{await refresh();}catch{}
+      return {ok:true,count:Number(state.problems?.length||localCount),source:"local"};
+    }
+
+    status("문제은행 복구 · 문제 인덱스 확인 중...");
+    let restored=0;
+    let indexIds=[];
+
+    try{
+      const idxSnap=await withTimeout(
+        db.ref(`${ROOT}/${user.uid}/problemIndex`).once("value"),
+        WRITE_TIMEOUT_MS,
+        "문제 인덱스"
+      );
+      const raw=idxSnap.val()||{};
+      indexIds=Object.values(raw)
+        .filter(x=>x?.id)
+        .map(x=>String(x.id));
+    }catch(err){
+      console.warn("v70 problemIndex read failed",err);
+    }
+
+    if(indexIds.length){
+      for(let i=0;i<indexIds.length;i++){
+        const id=indexIds[i];
+        status(`문제은행 복구 · ${i+1}/${indexIds.length}`);
+        try{
+          const remote=await fetchProblemRowV65(id);
+          if(!remote?.id)continue;
+          applyingRemote=true;
+          try{await nativePut(STORES.problems,remote);}finally{applyingRemote=false;}
+          upsertStateProblemV63(remote,false);
+          restored+=1;
+        }catch(err){
+          console.warn("v70 indexed problem restore failed",id,err);
+        }
+        if(i%3===2)await sleep(0);
+      }
+    }else{
+      // problemIndex가 없는 예전 클라우드도 복구 가능하게 /problems를 작은 묶음으로 읽는다.
+      status("문제은행 복구 · 구버전 클라우드 확인 중...");
+      const base=db.ref(`${ROOT}/${user.uid}/problems`);
+      let lastKey=null;
+      let guard=0;
+      const PAGE_NEW=3;
+
+      while(guard<50000){
+        guard+=1;
+        let q=base.orderByKey();
+        if(lastKey!==null)q=q.startAt(lastKey);
+        q=q.limitToFirst(lastKey===null?PAGE_NEW:PAGE_NEW+1);
+
+        let snap;
+        try{
+          snap=await withTimeout(q.once("value"),Math.max(WRITE_TIMEOUT_MS,30000),"구버전 문제 받기");
+        }catch(err){
+          console.warn("v70 legacy cloud page failed",err);
+          break;
+        }
+
+        let entries=Object.entries(snap.val()||{}).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+        if(lastKey!==null && entries.length && String(entries[0][0])===String(lastKey))entries.shift();
+        if(!entries.length)break;
+
+        for(const [rawKey,rawValue] of entries){
+          const remote=decodeRowForRepair(rawValue);
+          if(!remote?.id)continue;
+          applyingRemote=true;
+          try{await nativePut(STORES.problems,remote);}finally{applyingRemote=false;}
+          upsertStateProblemV63(remote,false);
+          restored+=1;
+          status(`문제은행 복구 · ${restored}개`);
+          lastKey=rawKey;
+        }
+
+        if(entries.length<PAGE_NEW)break;
+        await sleep(0);
+      }
+    }
+
+    if(restored>0){
+      state.problems=sortProblemsForDisplay(state.problems);
+      rebuildProblemIndexV63();
+      try{updateFilterOptionsV63();}catch{}
+      try{renderEmptyState();}catch{}
+      try{
+        localStorage.setItem("psatLastKnownProblemCountV66",String(state.problems.length));
+      }catch{}
+      status(`문제은행 복구됨 · ${state.problems.length}문제`,true);
+    }
+
+    return {
+      ok:Number(state.problems?.length||0)>0,
+      count:Number(state.problems?.length||0),
+      restored,
+      source:indexIds.length?"problemIndex":"problems"
+    };
+  };
+
   setTimeout(start,400);
 })();
 
@@ -7826,3 +7945,334 @@ window.psatLargeBankV63 = true;
   window.psatRandomStartRecoveryV68=true;
 })();
 
+
+/* === v69: 기존 오답기록 복구 ===
+   - v68은 문제은행(state/IndexedDB) 재로드까지만 했기 때문에,
+     예전/동기화 데이터에서 wrongActive=false로 굳어진 문제는 여전히 오답 후보 0개가 될 수 있었다.
+   - history를 시간순으로 다시 계산해 '틀림 -> 활성, 활성 상태에서 2회 연속 정답 -> 해제' 규칙을 복원한다.
+   - 복원값은 로컬 문제 레코드에 저장하고 progressUpdatedAtV64를 최신으로 올려
+     오래된 원격 progress가 다시 false로 덮어쓰지 못하게 한다.
+*/
+(function psatWrongHistoryRecoveryV69(){
+  let repairPromise=null;
+  let lastSignature="";
+  let rerendering=false;
+
+  function historyTimeV69(h){
+    return Number(
+      h?.createdAt || h?.answeredAt || h?.completedAt || h?.finishedAt ||
+      h?.timestamp || h?.updatedAt || 0
+    );
+  }
+
+  function historyCorrectV69(h){
+    if(typeof h?.isCorrect==="boolean")return h.isCorrect;
+    const selected=Number(h?.selectedAnswer);
+    const correct=Number(h?.correctAnswer);
+    if(Number.isFinite(selected)&&selected>0&&Number.isFinite(correct)&&correct>0){
+      return selected===correct;
+    }
+    return null;
+  }
+
+  async function nativePutProblemsV69(rows){
+    if(!rows.length)return;
+    const dbv=await openDb();
+    await new Promise((resolve,reject)=>{
+      const transaction=dbv.transaction(STORES.problems,"readwrite");
+      const store=transaction.objectStore(STORES.problems);
+      transaction.oncomplete=()=>resolve();
+      transaction.onerror=()=>reject(transaction.error || new Error("오답 복구 저장 실패"));
+      transaction.onabort=()=>reject(transaction.error || new Error("오답 복구 저장 중단"));
+      for(const row of rows)store.put(row);
+    });
+  }
+
+  async function repairWrongStateV69(force=false){
+    if(repairPromise)return repairPromise;
+    repairPromise=(async()=>{
+      const histories=await getAll(STORES.history);
+      if(!Array.isArray(histories)||!histories.length)return {changed:0,active:0,history:0};
+
+      let newest=0;
+      for(const h of histories)newest=Math.max(newest,historyTimeV69(h));
+      const signature=`${histories.length}:${newest}`;
+      if(!force && signature===lastSignature){
+        return {
+          changed:0,
+          active:(state.problems||[]).filter(p=>!!p?.wrongActive).length,
+          history:histories.length
+        };
+      }
+
+      const ordered=histories
+        .filter(h=>h?.problemId)
+        .map((h,i)=>({h,i,t:historyTimeV69(h)}))
+        .sort((a,b)=>a.t-b.t || a.i-b.i);
+
+      const derived=new Map();
+      const clearNeed=Math.max(1,Number(typeof WRONG_CLEAR_STREAK!=="undefined"?WRONG_CLEAR_STREAK:2)||2);
+      for(const item of ordered){
+        const h=item.h;
+        const result=historyCorrectV69(h);
+        if(result===null)continue;
+        const id=String(h.problemId||"");
+        if(!id)continue;
+        let s=derived.get(id);
+        if(!s){s={active:false,streak:0,sawWrong:false};derived.set(id,s);}
+        if(result===false){
+          s.active=true;
+          s.streak=0;
+          s.sawWrong=true;
+        }else if(s.active){
+          s.streak+=1;
+          if(s.streak>=clearNeed)s.active=false;
+        }
+      }
+
+      if(!state.problems?.length){
+        const rows=await getAll(STORES.problems);
+        if(rows?.length){
+          state.problems=sortProblemsForDisplay(rows);
+          try{rebuildProblemIndexV63();}catch{}
+        }
+      }
+
+      const now=Date.now();
+      const changed=[];
+      for(const p of (state.problems||[])){
+        if(!p?.id)continue;
+        const s=derived.get(String(p.id));
+        if(!s?.sawWrong)continue; // 불완전한 history로 정상 문제를 억지 변경하지 않음
+        const nextActive=!!s.active;
+        const nextStreak=Number(s.streak||0);
+        if(!!p.wrongActive===nextActive && Number(p.correctStreak||0)===nextStreak)continue;
+        p.wrongActive=nextActive;
+        p.correctStreak=nextStreak;
+        // 오래된 Firebase progress가 복구값을 다시 덮지 못하도록 로컬 진행상태 시각을 올린다.
+        p.progressUpdatedAtV64=Math.max(Number(p.progressUpdatedAtV64||0),now);
+        changed.push(p);
+      }
+
+      if(changed.length){
+        await nativePutProblemsV69(changed);
+        try{rebuildProblemIndexV63();}catch{}
+      }
+      lastSignature=signature;
+      const active=(state.problems||[]).filter(p=>!!p?.wrongActive).length;
+      return {changed:changed.length,active,history:histories.length};
+    })().finally(()=>{repairPromise=null;});
+    return repairPromise;
+  }
+
+  // 복습 탭을 열었을 때 기존 오답표시가 비어 있거나 누락돼 있어도 history에서 재구성한다.
+  const renderWrongListV69Base=renderWrongList;
+  renderWrongList=function(){
+    const result=renderWrongListV69Base.apply(this,arguments);
+    if(rerendering || (state.reviewMode||"wrong")!=="wrong")return result;
+    repairWrongStateV69(false).then(info=>{
+      if(!info?.changed)return;
+      rerendering=true;
+      try{renderWrongListV69Base();}finally{rerendering=false;}
+    }).catch(err=>console.warn("v69 wrong history repair failed",err));
+    return result;
+  };
+
+  // 오답랜덤복습이 0개로 계산되면, '없음'을 띄우기 전에 history를 강제로 1회 복구하고 재계산한다.
+  const startSessionV69Base=startSession;
+  startSession=function(problems,options={}){
+    const label=String(options?.label||"");
+    if(!label.includes("오답랜덤복습") || (Array.isArray(problems)&&problems.length)){
+      return startSessionV69Base.call(this,problems,options);
+    }
+
+    repairWrongStateV69(true).then(info=>{
+      const retry=reviewListForMode("wrong");
+      if(retry.length){
+        if(info?.changed)showToast(`기존 오답기록 ${info.active}개 복구했어`);
+        startSessionV69Base.call(this,retry,options);
+      }else{
+        startSessionV69Base.call(this,[],options);
+      }
+    }).catch(err=>{
+      console.warn("v69 wrong random repair failed",err);
+      startSessionV69Base.call(this,[],options);
+    });
+  };
+
+  // 로그인/빠른동기화가 끝난 뒤 history가 들어오는 시간을 고려해 두 번 가볍게 재확인한다.
+  setTimeout(()=>repairWrongStateV69(false).then(info=>{
+    if(info?.changed && document.getElementById("wrongView")?.classList.contains("active"))renderWrongList();
+  }).catch(console.warn),1200);
+  setTimeout(()=>repairWrongStateV69(false).then(info=>{
+    if(info?.changed && document.getElementById("wrongView")?.classList.contains("active"))renderWrongList();
+  }).catch(console.warn),4500);
+
+  window.psatRepairWrongHistoryV69=repairWrongStateV69;
+  window.psatWrongHistoryRecoveryV69=true;
+})();
+
+
+/* === v70: 전체/안 푼/오답 모두 0개로 나오는 문제 수정 ===
+   핵심: 이 증상은 오답 플래그가 아니라 '문제 후보의 원본(source)'을 못 읽는 문제다.
+   - 랜덤 시작 후보가 0개면 IndexedDB 문제은행을 직접 다시 읽는다.
+   - 로컬이 0개면 history/progress와 분리된 문제본문 전용 클라우드 복구를 실행한다.
+   - Firebase 자동로그인보다 사용자가 먼저 누른 경우 잠시 기다렸다가 재시도한다.
+   - 문제은행 자체가 0개인 경우와, 문제는 있으나 현재 필터만 0개인 경우를 구분해 표시한다.
+*/
+(function psatSolveSourceRecoveryV70(){
+  let busy=false;
+
+  function cleanV70(v){
+    const s=String(v??"").trim();
+    return s==="전체"?"":s;
+  }
+
+  function categoryOfV70(p){
+    try{
+      if(typeof problemCategoryV28==="function")return cleanV70(problemCategoryV28(p));
+    }catch{}
+    return cleanV70(p?.category||"");
+  }
+
+  function filteredMainV70(){
+    const mode=cleanV70(els.modeSelect?.value)||"all";
+    const subject=cleanV70(els.subjectFilter?.value);
+    const category=cleanV70(document.getElementById("categoryFilter")?.value);
+    const year=cleanV70(els.yearFilter?.value);
+    const targetYear=year?normalizedYear(year):"";
+
+    return (Array.isArray(state.problems)?state.problems:[]).filter(p=>{
+      if(subject && !subjectMatches(p,subject))return false;
+      if(category && categoryOfV70(p)!==category)return false;
+      if(targetYear && normalizedYear(p?.year)!==targetYear)return false;
+      if(mode==="wrong")return !!p?.wrongActive;
+      if(mode==="slow")return averageTime(p)>=SLOW_MS || Number(p?.lastTimeMs||0)>=SLOW_MS;
+      if(mode==="unseen")return !(Number(p?.attempts||0)>0);
+      if(mode==="flagged")return !!p?.flagged;
+      return true;
+    });
+  }
+
+  function filteredReviewV70(mode){
+    const subject=cleanV70(els.reviewSubjectFilter?.value);
+    const category=cleanV70(document.getElementById("reviewCategoryFilter")?.value);
+    const year=cleanV70(els.reviewYearFilter?.value);
+    const yearText=String(els.reviewYearTextFilter?.value||"").trim().toLowerCase();
+    const targetYear=year?normalizedYear(year):"";
+
+    return (Array.isArray(state.problems)?state.problems:[]).filter(p=>{
+      if(subject && !subjectMatches(p,subject))return false;
+      if(category && categoryOfV70(p)!==category)return false;
+      const py=normalizedYear(p?.year);
+      if(targetYear && py!==targetYear)return false;
+      if(yearText && !py.toLowerCase().includes(yearText))return false;
+      if(mode==="correct")return Number(p?.correct||0)>0 && !p?.wrongActive;
+      if(mode==="unseen")return !(Number(p?.attempts||0)>0);
+      return !!p?.wrongActive;
+    });
+  }
+
+  function candidatesV70(options={}){
+    const label=String(options?.label||"");
+    if(label.includes("오답랜덤복습"))return filteredReviewV70("wrong");
+    if(label.includes("정답복습"))return filteredReviewV70("correct");
+    if(label.includes("안 푼 문제 복습"))return filteredReviewV70("unseen");
+
+    // 빠른 시작 버튼은 label의 과목을 우선한다.
+    let list=filteredMainV70();
+    let forcedSubject="";
+    if(label.includes("언어 랜덤"))forcedSubject="언어";
+    else if(label.includes("자료 랜덤"))forcedSubject="자료";
+    else if(label.includes("상황 랜덤"))forcedSubject="상황";
+    if(forcedSubject)list=list.filter(p=>subjectMatches(p,forcedSubject));
+    return list;
+  }
+
+  async function reloadLocalV70(){
+    const rows=await getAll(STORES.problems);
+    if(!Array.isArray(rows)||!rows.length)return 0;
+    state.problems=sortProblemsForDisplay(rows);
+    try{rebuildProblemIndexV63();}catch{}
+    try{updateFilterOptionsV63();}catch{}
+    try{renderEmptyState();}catch{}
+    return rows.length;
+  }
+
+  async function waitAndForceCloudV70(){
+    // Firebase auth 복원이 setTimeout(start,400) 뒤 시작되므로 버튼을 너무 빨리 눌렀을 때 대비.
+    for(let i=0;i<12;i++){
+      if(typeof window.psatForceCloudProblemsV70==="function"){
+        try{
+          const result=await window.psatForceCloudProblemsV70();
+          if(result?.ok || result?.reason!=="not-logged-in")return result;
+        }catch(err){console.warn("v70 force cloud attempt failed",err);}
+      }
+      await new Promise(r=>setTimeout(r,350));
+    }
+    return {ok:false,count:0,reason:"not-logged-in"};
+  }
+
+  async function recoverSourceV70(options={}){
+    // state가 비었거나 부분 상태일 수 있으므로, 후보 0일 때는 항상 IndexedDB 원본부터 확인.
+    let local=0;
+    try{local=await reloadLocalV70();}catch(err){console.warn("v70 local reload failed",err);}
+    if(local>0)return {count:local,candidates:candidatesV70(options),source:"local"};
+
+    showToast("문제은행을 다시 불러오는 중...");
+    try{await waitAndForceCloudV70();}catch(err){console.warn("v70 cloud source recovery failed",err);}
+    try{local=await reloadLocalV70();}catch{}
+    return {count:local,candidates:candidatesV70(options),source:"cloud"};
+  }
+
+  const startSessionV70Base=startSession;
+  startSession=function(problems,options={}){
+    if(Array.isArray(problems)&&problems.length){
+      return startSessionV70Base.call(this,problems,options);
+    }
+    if(busy){
+      showToast("문제은행 확인 중이야");
+      return;
+    }
+
+    busy=true;
+    recoverSourceV70(options).then(async result=>{
+      let list=result.candidates||[];
+
+      // 오답만 0개인 경우에는 v69 history 복구 후 한 번 더 계산.
+      const label=String(options?.label||"");
+      const mode=cleanV70(els.modeSelect?.value)||"all";
+      const wantsWrong=label.includes("오답랜덤복습") || mode==="wrong";
+      if(!list.length && result.count>0 && wantsWrong && typeof window.psatRepairWrongHistoryV69==="function"){
+        try{await window.psatRepairWrongHistoryV69(true);}catch{}
+        list=candidatesV70(options);
+      }
+
+      busy=false;
+      if(list.length){
+        document.getElementById("emptySolve")?.classList.add("hidden");
+        return startSessionV70Base.call(this,list,options);
+      }
+
+      const total=Number(result.count||state.problems?.length||0);
+      if(total<=0){
+        showToast("현재 기기에서 문제은행을 읽지 못했어 · 동기화에서 문제 본문을 복구해야 해");
+        return;
+      }
+
+      const modeNow=cleanV70(els.modeSelect?.value)||"all";
+      if(modeNow==="all" && !cleanV70(els.subjectFilter?.value) && !cleanV70(document.getElementById("categoryFilter")?.value) && !cleanV70(els.yearFilter?.value)){
+        // 전체/전체/전체인데 0은 논리적으로 불가능하므로 필터 문제가 아니라 source 상태 문제로 취급.
+        showToast(`문제은행 ${total}개는 확인됐는데 풀이목록 생성에 실패했어`);
+      }else{
+        showToast(`문제은행 ${total}개 확인 · 현재 선택 조건에 맞는 문제는 0개야`);
+      }
+    }).catch(err=>{
+      busy=false;
+      console.error("v70 solve source recovery failed",err);
+      showToast("문제은행 확인 중 오류가 났어");
+    });
+  };
+
+  window.psatSolveSourceRecoveryV70=true;
+})();

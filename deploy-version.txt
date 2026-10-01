@@ -1,1 +1,1 @@
-PSAT v68 random-start IndexedDB/Firebase recovery; based on v67
+PSAT v70 solve-source recovery: fixes all/unseen/wrong all showing zero by restoring problem source independently of large history sync

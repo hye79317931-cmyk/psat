@@ -323,3 +323,16 @@
 - 실제 필터 결과가 0일 때만 문제가 없다는 안내 표시
 - 정상 랜덤 시작은 DB 전체조회 없이 기존 속도 유지
 - 서비스워커 navigation을 network-first로 바꿔 같은 버전 파일을 다시 올렸을 때 오래된 시작화면이 고정되는 현상 방지
+
+## v69
+- 오답랜덤복습 후보가 0개일 때 문제은행만 재로드하지 않고 풀이기록(history)에서 오답 상태를 재계산합니다.
+- 기존/동기화 데이터에서 `wrong` 기록은 남아 있지만 `wrongActive`가 false로 굳어진 문제를 복구합니다.
+- 규칙은 기존 앱과 동일하게 틀리면 오답 활성, 오답 상태에서 2회 연속 정답이면 해제입니다.
+- 복구된 상태는 로컬 IndexedDB에 저장되며 오래된 원격 progress가 다시 덮지 않도록 진행상태 시각을 갱신합니다.
+
+
+## v70
+- Fixes the case where 전체 랜덤 / 안 푼 문제 / 오답 all report zero because the problem source itself was not loaded.
+- Empty candidate start now reloads IndexedDB first.
+- If local problems are zero, restores problem bodies independently from Firebase history/progress so large history cannot block problem loading.
+- Distinguishes an actually empty problem bank from a filter with zero matches.
