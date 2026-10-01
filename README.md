@@ -295,3 +295,22 @@
 
 - Direct File System Access save when browser supports it; otherwise 48MB OPFS parts.
 - Explanation first image duplicate removed only inside backup and restored on import.
+
+## v66
+- 문제풀이에 문제 없음으로 보이는 현상 방지
+- v65 시작 시 과거 deletion marker 재적용 중단
+- v66 이후 실제 삭제만 schemaV66 marker로 실시간 적용
+- state만 비었으면 IndexedDB에서 즉시 재로드
+- 문제수가 0 또는 이전 정상수의 절반 미만이면 v60 합집합 복구 자동 실행
+- v65 백업/고속동기화 포함 기존 기능 유지
+
+
+## v67
+- v66 기준 유지
+- 문제목록에 문제가 있는데 문제풀이 탭에서 '아직 등록된 문제가 없어'가 뜨는 stale empty-state 수정
+- solveView 진입 시 현재 state/current/queue 기준으로 emptySolve 즉시 재계산
+- 실제 문제 load 시 emptySolve 강제 숨김
+- 메모리가 비어버린 경우에만 IndexedDB count 확인 후 전체 문제 복구
+- 1만+ 문제 성능 보호: 문제가 이미 메모리에 있으면 DB 전체 재조회하지 않음
+- 직접풀기/복습풀기/랜덤풀기 시작 경로 모두 보강
+- p66까지의 백업/동기화/대용량/해설 다중페이지/중간분류 기능 유지

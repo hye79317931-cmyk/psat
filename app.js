@@ -537,6 +537,10 @@ function fillSubjectSelect(select, keepValue = true) {
 async function refresh() {
   state.problems = sortProblemsForDisplay(await getAll(STORES.problems));
   rebuildProblemIndexV63();
+  try{
+    const oldCount=Number(localStorage.getItem("psatLastKnownProblemCountV66")||0);
+    if(state.problems.length>oldCount)localStorage.setItem("psatLastKnownProblemCountV66",String(state.problems.length));
+  }catch{}
   updateFilterOptionsV63();
   renderEmptyState();
   const active = activeViewIdV63();
@@ -6117,16 +6121,11 @@ window.psatManualNextLeftV44 = true;
       }
     }finally{applyingRemote=false;}
 
-    for(const marker of Object.values(small.deletionRaw||{})){
-      if(await applyDeletionMarker(marker)){
-        const id=String(marker?.id||"");
-        if(id){
-          state.problems=state.problems.filter(p=>String(p.id)!==id);
-          state.problemMapV63?.delete(id);
-        }
-        changed=true;
-      }
-    }
+    // v66: 시작 동기화에서는 과거 삭제표식을 다시 적용하지 않는다.
+    // 이전 버전에서 남은 tombstone이 정상 문제를 지우는 사고를 막는다.
+    try{
+      localStorage.setItem(`psatDeletionCutoffV66:${user.uid}`,String(Date.now()));
+    }catch{}
 
     if(changed){
       state.problems=sortProblemsForDisplay(state.problems);
@@ -6241,7 +6240,7 @@ window.psatManualNextLeftV44 = true;
 
   async function removeOne(path,id,label){
     if(path==="problems"){
-      const marker={id:String(id),deletedAt:Date.now(),schemaV60:SYNC_SCHEMA};
+      const marker={id:String(id),deletedAt:Date.now(),schemaV60:SYNC_SCHEMA,schemaV66:66};
       await retryWrite(
         ()=>db.ref(`${ROOT}/${user.uid}/_deletions/problems/${keyOf(id)}`).set(marker),
         "삭제 기록 저장"
@@ -6770,7 +6769,14 @@ window.psatManualNextLeftV44 = true;
 
   async function applyRemoteDeletion(snap){
     if(fullPushRunning||dirtyRunning||repairRunning)return;
-    if(await applyDeletionMarker(snap.val()))scheduleRefresh();
+    const marker=snap.val();
+    const cutoff=Number(localStorage.getItem(`psatDeletionCutoffV66:${user?.uid||""}`)||0);
+    const deletedAt=Number(marker?.deletedAt||0);
+    const explicitV66=Number(marker?.schemaV66||0)>=66;
+    // Firebase child_added는 listener 연결 때 과거 marker도 전부 재생한다.
+    // v66 시작 전 marker는 무시하고, v66에서 새로 만든 정상 삭제만 적용한다.
+    if(!explicitV66 && (!deletedAt || deletedAt<cutoff))return;
+    if(await applyDeletionMarker(marker))scheduleRefresh();
   }
 
 
@@ -6844,6 +6850,33 @@ window.psatManualNextLeftV44 = true;
     // child_removed만으로는 절대 로컬 문제 삭제하지 않음.
   }
 
+
+  async function emergencyProblemRestoreV66(){
+    const current=Number(state.problems?.length||0);
+    let lastKnown=0;
+    try{lastKnown=Number(localStorage.getItem("psatLastKnownProblemCountV66")||0);}catch{}
+    let cloudCount=0;
+    try{
+      const metaSnap=await withTimeout(
+        db.ref(`${ROOT}/${user.uid}/_meta/problemCount`).once("value"),
+        WRITE_TIMEOUT_MS,"문제수 확인"
+      );
+      cloudCount=Number(metaSnap.val()||0);
+    }catch{}
+    const expected=Math.max(lastKnown,cloudCount);
+    const suspicious=(current===0&&expected>0)||(expected>=20&&current<Math.floor(expected*0.5));
+    if(!suspicious){
+      try{localStorage.setItem("psatLastKnownProblemCountV66",String(Math.max(lastKnown,current,cloudCount)));}catch{}
+      return false;
+    }
+    status(`문제목록 자동복구 중 · 현재 ${current} / 기준 ${expected}`);
+    await repairAndNormalize(true);
+    const restored=Number(state.problems?.length||0);
+    try{localStorage.setItem("psatLastKnownProblemCountV66",String(Math.max(lastKnown,restored,cloudCount)));}catch{}
+    status(`문제목록 복구됨 · ${restored}문제`,true);
+    return true;
+  }
+
   async function afterLogin(u){
     user=u;
     localStorage.setItem(LAST_EMAIL_KEY,u.email||'');
@@ -6854,6 +6887,12 @@ window.psatManualNextLeftV44 = true;
     // v65부터 평소 시작 때는 큰 problems 전체를 절대 받지 않는다.
     // 꼬인 데이터 합집합 복구가 필요할 때만 사용자가 '동기화 복구'를 누른다.
     await fastSyncV65();
+    await emergencyProblemRestoreV66();
+    try{
+      const nowCount=Number(state.problems?.length||0);
+      const oldCount=Number(localStorage.getItem("psatLastKnownProblemCountV66")||0);
+      if(nowCount>oldCount)localStorage.setItem("psatLastKnownProblemCountV66",String(nowCount));
+    }catch{}
   }
 
   function bindUI(){
@@ -7432,6 +7471,185 @@ window.psatManualNextLeftV44 = true;
   },true);
 })();
 
+
+
+
+
+/* === v67: 문제목록에는 있는데 문제풀이에 '등록된 문제 없음' 표시되는 버그 수정 === */
+(function psatSolveAvailabilityV67(){
+  let healing=false;
+
+  function hideFalseEmptyV67(){
+    const empty=document.getElementById("emptySolve");
+    if(!empty)return;
+    const hasProblem=!!(
+      state.current ||
+      (Array.isArray(state.problems) && state.problems.length>0) ||
+      (Array.isArray(state.queue) && state.queue.length>0)
+    );
+    empty.classList.toggle("hidden",hasProblem);
+  }
+
+  async function healLocalStateV67(){
+    if(healing)return false;
+
+    // 메모리에 문제가 이미 있으면 DB 전체 1만개를 다시 읽지 않는다.
+    if(Array.isArray(state.problems) && state.problems.length){
+      if(!state.problemMapV63 || state.problemMapV63.size!==state.problems.length){
+        try{ rebuildProblemIndexV63(); }catch{}
+      }
+      hideFalseEmptyV67();
+      return true;
+    }
+
+    healing=true;
+    try{
+      // 우선 count만 확인해서 대용량 전체조회는 정말 필요할 때만 한다.
+      let count=0;
+      try{
+        if(typeof countStoreV63==="function") count=await countStoreV63(STORES.problems);
+      }catch{}
+
+      if(!count){
+        hideFalseEmptyV67();
+        return false;
+      }
+
+      const rows=await getAll(STORES.problems);
+      if(!rows.length){
+        hideFalseEmptyV67();
+        return false;
+      }
+
+      state.problems=sortProblemsForDisplay(rows);
+      rebuildProblemIndexV63();
+      updateFilterOptionsV63();
+      hideFalseEmptyV67();
+
+      try{
+        localStorage.setItem("psatLastKnownProblemCountV67",String(rows.length));
+      }catch{}
+      return true;
+    }finally{
+      healing=false;
+    }
+  }
+
+  // 문제풀이 탭으로 들어갈 때마다 빈화면 표시를 현재 메모리 상태와 즉시 맞춘다.
+  const switchViewV67Base=switchView;
+  switchView=function(viewId){
+    const result=switchViewV67Base.apply(this,arguments);
+    if(viewId==="solveView"){
+      hideFalseEmptyV67();
+      if(!state.problems?.length){
+        healLocalStateV67().then(hideFalseEmptyV67).catch(console.warn);
+      }
+    }
+    return result;
+  };
+
+  // 실제 문제를 여는 순간에는 '등록된 문제 없음' 카드를 무조건 숨긴다.
+  const loadCurrentProblemV67Base=loadCurrentProblem;
+  loadCurrentProblem=function(problem){
+    if(problem){
+      const empty=document.getElementById("emptySolve");
+      empty?.classList.add("hidden");
+    }
+    const result=loadCurrentProblemV67Base.apply(this,arguments);
+    hideFalseEmptyV67();
+    return result;
+  };
+
+  // 목록에서 직접 푸는 경우에도 Map/메모리 상태를 다시 맞춘다.
+  const startDirectProblemV67Base=startDirectProblem;
+  startDirectProblem=function(problem){
+    if(problem?.id){
+      const live=problemByIdV63(problem.id) || problem;
+      hideFalseEmptyV67();
+      return startDirectProblemV67Base.call(this,live);
+    }
+    return startDirectProblemV67Base.apply(this,arguments);
+  };
+
+  const startReviewProblemV67Base=startReviewProblem;
+  startReviewProblem=function(problem,label){
+    if(problem?.id){
+      const live=problemByIdV63(problem.id) || problem;
+      hideFalseEmptyV67();
+      return startReviewProblemV67Base.call(this,live,label);
+    }
+    return startReviewProblemV67Base.apply(this,arguments);
+  };
+
+  /*
+    랜덤/필터 풀이 시작 시 메모리 자체가 비어버린 경우만 IndexedDB에서 1회 복구 후 재시도.
+    메모리에 문제가 있는데 필터 결과가 0개인 정상 상황은 억지로 전체문제로 바꾸지 않는다.
+  */
+  const startSessionV67Base=startSession;
+  startSession=function(problems,options={}){
+    if(Array.isArray(problems) && problems.length){
+      hideFalseEmptyV67();
+      return startSessionV67Base.call(this,problems,options);
+    }
+
+    if(state.problems?.length){
+      hideFalseEmptyV67();
+      return startSessionV67Base.call(this,problems||[],options);
+    }
+
+    healLocalStateV67().then(ok=>{
+      if(!ok){
+        startSessionV67Base.call(this,[],options);
+        return;
+      }
+
+      let retry=[];
+      try{
+        const label=String(options?.label||"");
+        if(label.includes("오답랜덤복습")){
+          retry=reviewListForMode("wrong");
+        }else if(label.includes("정답복습")){
+          retry=reviewListForMode("correct");
+        }else if(label.includes("안 푼")){
+          retry=reviewListForMode("unseen");
+        }else{
+          let subject=els.subjectFilter?.value||"";
+          if(label.includes("언어"))subject="언어";
+          else if(label.includes("자료"))subject="자료";
+          else if(label.includes("상황"))subject="상황";
+          retry=filterProblems(
+            els.modeSelect?.value||"all",
+            subject,
+            els.yearFilter?.value||""
+          );
+        }
+      }catch{}
+
+      hideFalseEmptyV67();
+      startSessionV67Base.call(this,retry,options);
+    }).catch(err=>{
+      console.warn("v67 solve restore failed",err);
+      startSessionV67Base.call(this,[],options);
+    });
+  };
+
+  // 문제 등록 직후에도 문제풀이 빈화면 문구가 남지 않게 즉시 갱신.
+  document.addEventListener("submit",event=>{
+    if(event.target?.id!=="problemForm")return;
+    setTimeout(hideFalseEmptyV67,0);
+    setTimeout(hideFalseEmptyV67,150);
+  },false);
+
+  // 앱 복귀/탭 이동 후 stale DOM도 교정.
+  document.addEventListener("visibilitychange",()=>{
+    if(document.visibilityState==="visible")hideFalseEmptyV67();
+  });
+
+  window.psatHealProblemsV67=healLocalStateV67;
+  window.psatHideFalseEmptyV67=hideFalseEmptyV67;
+
+  hideFalseEmptyV67();
+})();
 
 
 /* === v63: 10,000+ 문제 성능/백업 ===
