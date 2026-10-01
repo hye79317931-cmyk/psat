@@ -6960,6 +6960,15 @@ window.psatManualNextLeftV44 = true;
     else if(user)fastSyncV65().catch(console.warn);
   });
 
+  // v68: 문제풀이 시작 직전 로컬 문제은행이 비어 있을 때 사용할 안전 복구 진입점.
+  // Firebase 내부 객체는 이 IIFE 밖에서 직접 접근할 수 없으므로, 필요한 동기화만 제한적으로 노출한다.
+  window.psatEnsureCloudProblemsV68=async function(){
+    if(!user||!db)return {ok:false,count:Number(state.problems?.length||0),reason:"not-logged-in"};
+    await fastSyncV65();
+    await emergencyProblemRestoreV66();
+    return {ok:Number(state.problems?.length||0)>0,count:Number(state.problems?.length||0)};
+  };
+
   setTimeout(start,400);
 })();
 
@@ -7660,3 +7669,160 @@ window.psatManualNextLeftV44 = true;
    - 기존 JSON 백업 복원 호환
 */
 window.psatLargeBankV63 = true;
+
+/* === v68: 랜덤 시작에서 '해당 조건의 문제가 없어'가 잘못 뜨는 현상 수정 ===
+   - 후보가 0개면 state만 믿지 않고 IndexedDB 문제은행을 다시 확인
+   - state가 일부/오래된 상태여도 DB 전체를 1회 재로드한 뒤 현재 필터로 재계산
+   - 로컬 DB까지 비었으면 로그인된 Firebase 빠른동기화/비상복구를 1회 요청
+   - 실제로 필터 결과가 0개일 때만 '문제가 없어' 표시
+   - 정상 시작(후보가 이미 있음)은 기존 v67과 동일하게 즉시 실행하여 10,000+ 문제 성능 유지
+*/
+(function psatRandomStartRecoveryV68(){
+  let recovering=false;
+
+  function cleanFilterV68(value){
+    const v=String(value??"").trim();
+    return v==="전체"?"":v;
+  }
+
+  function robustFilterV68(mode,subject,year,category){
+    const targetMode=cleanFilterV68(mode)||"all";
+    const targetSubject=cleanFilterV68(subject);
+    const targetYear=cleanFilterV68(year);
+    const targetCategory=cleanFilterV68(category);
+
+    return (Array.isArray(state.problems)?state.problems:[]).filter(p=>{
+      if(targetSubject && !subjectMatches(p,targetSubject))return false;
+      if(targetCategory){
+        const pc=typeof problemCategoryV28==="function"
+          ? problemCategoryV28(p)
+          : String(p?.category||"").trim();
+        if(pc!==targetCategory)return false;
+      }
+      if(targetYear && normalizedYear(p?.year)!==normalizedYear(targetYear))return false;
+      if(targetMode==="wrong")return !!p?.wrongActive;
+      if(targetMode==="slow")return averageTime(p)>=SLOW_MS || Number(p?.lastTimeMs||0)>=SLOW_MS;
+      if(targetMode==="unseen")return !(Number(p?.attempts)>0);
+      if(targetMode==="flagged")return !!p?.flagged;
+      return true;
+    });
+  }
+
+  function reviewCandidatesV68(mode){
+    const subject=cleanFilterV68(els.reviewSubjectFilter?.value);
+    const category=cleanFilterV68(document.getElementById("reviewCategoryFilter")?.value);
+    const year=cleanFilterV68(els.reviewYearFilter?.value);
+    const yearText=String(els.reviewYearTextFilter?.value||"").trim().toLowerCase();
+
+    return (Array.isArray(state.problems)?state.problems:[])
+      .filter(p=>{
+        if(subject && !subjectMatches(p,subject))return false;
+        if(category){
+          const pc=typeof problemCategoryV28==="function"
+            ? problemCategoryV28(p)
+            : String(p?.category||"").trim();
+          if(pc!==category)return false;
+        }
+        const py=normalizedYear(p?.year);
+        if(year && py!==normalizedYear(year))return false;
+        if(yearText && !py.toLowerCase().includes(yearText))return false;
+        if(mode==="correct")return Number(p?.correct||0)>0 && !p?.wrongActive;
+        if(mode==="unseen")return !(Number(p?.attempts)>0);
+        return !!p?.wrongActive;
+      })
+      .sort((a,b)=>Number(b?.lastAnsweredAt||0)-Number(a?.lastAnsweredAt||0));
+  }
+
+  function candidatesForRequestV68(options={}){
+    const label=String(options?.label||"");
+    if(label.includes("오답랜덤복습"))return reviewCandidatesV68("wrong");
+    if(label.includes("정답복습"))return reviewCandidatesV68("correct");
+    if(label.includes("안 푼"))return reviewCandidatesV68("unseen");
+
+    let subject=cleanFilterV68(els.subjectFilter?.value);
+    if(label.includes("언어 랜덤"))subject="언어";
+    else if(label.includes("자료 랜덤"))subject="자료";
+    else if(label.includes("상황 랜덤"))subject="상황";
+
+    return robustFilterV68(
+      els.modeSelect?.value||"all",
+      subject,
+      els.yearFilter?.value||"",
+      document.getElementById("categoryFilter")?.value||""
+    );
+  }
+
+  async function reloadLocalBankV68(){
+    const rows=await getAll(STORES.problems);
+    if(!Array.isArray(rows)||!rows.length)return 0;
+    state.problems=sortProblemsForDisplay(rows);
+    rebuildProblemIndexV63();
+    try{updateFilterOptionsV63();}catch{}
+    try{renderEmptyState();}catch{}
+    return rows.length;
+  }
+
+  async function recoverCandidatesV68(options={}){
+    // 후보가 0개인 비정상 상황에서만 전체 DB 조회를 허용한다.
+    let localCount=0;
+    try{
+      localCount=typeof countStoreV63==="function"
+        ? await countStoreV63(STORES.problems)
+        : (await getAll(STORES.problems)).length;
+    }catch{}
+
+    if(localCount>0){
+      try{await reloadLocalBankV68();}catch(err){console.warn("v68 local bank reload failed",err);}
+      const localCandidates=candidatesForRequestV68(options);
+      if(localCandidates.length)return localCandidates;
+      // DB에 문제는 있으나 현재 필터가 실제로 0개인 경우.
+      return [];
+    }
+
+    // 로컬 DB 자체가 비었을 때만 클라우드 복구를 시도한다.
+    if(typeof window.psatEnsureCloudProblemsV68==="function"){
+      try{
+        showToast("문제목록 다시 불러오는 중...");
+        await window.psatEnsureCloudProblemsV68();
+        try{await reloadLocalBankV68();}catch{}
+      }catch(err){
+        console.warn("v68 cloud restore failed",err);
+      }
+    }
+    return candidatesForRequestV68(options);
+  }
+
+  const startSessionV68Base=startSession;
+  startSession=function(problems,options={}){
+    if(Array.isArray(problems)&&problems.length){
+      return startSessionV68Base.call(this,problems,options);
+    }
+
+    if(recovering){
+      showToast("문제목록 불러오는 중이야");
+      return;
+    }
+
+    recovering=true;
+    recoverCandidatesV68(options).then(candidates=>{
+      recovering=false;
+      if(candidates.length){
+        const empty=document.getElementById("emptySolve");
+        empty?.classList.add("hidden");
+        startSessionV68Base.call(this,candidates,options);
+        return;
+      }
+
+      const total=Number(state.problems?.length||0);
+      if(total>0)showToast(`저장된 문제 ${total}개 중 현재 조건에 맞는 문제가 없어`);
+      else showToast("저장된 문제를 불러오지 못했어 · 동기화 상태를 확인해줘");
+    }).catch(err=>{
+      recovering=false;
+      console.warn("v68 random start recovery failed",err);
+      showToast("문제목록을 다시 읽는 중 오류가 났어");
+    });
+  };
+
+  window.psatRandomStartRecoveryV68=true;
+})();
+
