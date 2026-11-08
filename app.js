@@ -8078,3 +8078,89 @@ window.psatLargeBankV63 = true;
 
   window.psatReviewBulkV72 = { selected, moveSelectedToUnseen };
 })();
+
+
+/* === v73: 복습 '안 푼 문제' 직접 렌더 고정 ===
+   v41/v43/v72에서 복습 함수가 여러 번 덮어써진 상태에서도
+   안 푼 문제 버튼은 최종 상태에서 직접 mode를 고정하고,
+   state.problems 원본에서 attempts=0 또는 manualUnseenV72=true를 계산한다.
+   오답/정답 복습, 풀이, 필기, 동기화 경로는 변경하지 않는다.
+*/
+(function psatUnseenDirectV73(){
+  function q(id){ return document.getElementById(id); }
+
+  function reviewFiltersV73(problem){
+    const subject = els.reviewSubjectFilter?.value || '';
+    const category = q('reviewCategoryFilter')?.value || '';
+    const year = els.reviewYearFilter?.value || '';
+    const yearText = String(els.reviewYearTextFilter?.value || '').trim().toLowerCase();
+    const problemYear = normalizedYear(problem?.year);
+
+    if (subject && !subjectMatches(problem, subject)) return false;
+    if (category) {
+      try {
+        if (typeof categoryMatchesV28 === 'function' && !categoryMatchesV28(problem, category)) return false;
+      } catch {
+        if (String(problem?.category || '').trim() !== String(category).trim()) return false;
+      }
+    }
+    if (year && problemYear !== normalizedYear(year)) return false;
+    if (yearText && !String(problemYear || '').toLowerCase().includes(yearText)) return false;
+    return true;
+  }
+
+  function unseenListV73(){
+    const bank = Array.isArray(state.problems) ? state.problems : [];
+    return bank.filter((p) =>
+      reviewFiltersV73(p) &&
+      (Number(p?.attempts || 0) <= 0 || p?.manualUnseenV72 === true)
+    );
+  }
+
+  const reviewListForModeV73Base = reviewListForMode;
+  reviewListForMode = function(mode){
+    if (mode === 'unseen') return unseenListV73();
+    return reviewListForModeV73Base(mode);
+  };
+
+  function setUnseenModeV73(){
+    state.reviewMode = 'unseen';
+    if (els.reviewWrongBtn) els.reviewWrongBtn.classList.add('secondary');
+    if (els.reviewCorrectBtn) els.reviewCorrectBtn.classList.add('secondary');
+    if (els.reviewWrongRandomBtn) els.reviewWrongRandomBtn.classList.add('secondary');
+    const btn = q('reviewUnseenBtn');
+    if (btn) btn.classList.remove('secondary');
+    if (typeof state.reviewLimitV63 !== 'undefined') state.reviewLimitV63 = LIST_BATCH_V63;
+    renderWrongList();
+  }
+
+  const unseenBtn = q('reviewUnseenBtn');
+  if (unseenBtn && !unseenBtn.dataset.v73DirectReady) {
+    unseenBtn.dataset.v73DirectReady = '1';
+    unseenBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setUnseenModeV73();
+    }, true);
+  }
+
+  // 필터 변경 중 안 푼 문제 모드라면 같은 직접 계산으로 즉시 다시 그린다.
+  for (const [id, evt] of [
+    ['reviewSubjectFilter','change'],
+    ['reviewCategoryFilter','change'],
+    ['reviewYearFilter','change'],
+    ['reviewYearTextFilter','input']
+  ]) {
+    const el = q(id);
+    if (!el || el.dataset.v73UnseenFilterReady) continue;
+    el.dataset.v73UnseenFilterReady = '1';
+    el.addEventListener(evt, () => {
+      if (state.reviewMode === 'unseen') setTimeout(renderWrongList, 0);
+    });
+  }
+
+  window.psatUnseenDirectV73 = {
+    unseenList: unseenListV73,
+    open: setUnseenModeV73
+  };
+})();

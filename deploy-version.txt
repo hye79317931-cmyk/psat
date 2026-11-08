@@ -1,1 +1,1 @@
-PSAT v72 review bulk select from verified GitHub main v71: individual or all filtered review problems can be moved to manual unseen while preserving solve history; manual unseen syncs and clears after re-solving
+PSAT v73 unseen-review direct fix: the review '안 푼 문제' button now bypasses overlapping legacy review wrappers and directly lists never-attempted or manualUnseenV72 problems from the current state bank; other PSAT behavior is unchanged
