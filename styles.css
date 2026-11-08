@@ -2073,3 +2073,48 @@ body > #exitSummaryOverlayV49 {
   margin-top:8px;
 }
 .backup-parts-v65 button{min-height:38px}
+
+
+/* === v72: 복습 문제 선택 + 전체선택 + 안 푼 문제로 보내기 === */
+.review-bulk-bar-v72 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.review-selected-count-v72 {
+  min-width: 72px;
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+.review-bulk-hint-v72 { margin-top: 4px; }
+.review-select-v72 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  margin: 0 0 7px 0;
+  border: 1px solid var(--line, #d8deea);
+  border-radius: 10px;
+  background: var(--card, rgba(255,255,255,.06));
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+.review-select-v72 input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: currentColor;
+}
+.review-item.review-selected-v72 {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+.review-bulk-bar-v72.hidden,
+.review-bulk-hint-v72.hidden { display: none !important; }
+@media (max-width: 640px) {
+  .review-bulk-bar-v72 > button { min-height: 42px; }
+  #reviewMoveUnseenV72 { flex: 1 1 190px; }
+}

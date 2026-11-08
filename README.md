@@ -314,3 +314,10 @@
 - 1만+ 문제 성능 보호: 문제가 이미 메모리에 있으면 DB 전체 재조회하지 않음
 - 직접풀기/복습풀기/랜덤풀기 시작 경로 모두 보강
 - p66까지의 백업/동기화/대용량/해설 다중페이지/중간분류 기능 유지
+
+
+## v72
+- GitHub main v71 verified baseline.
+- Review tab: individual selection and current-filter full selection.
+- Selected problems can be moved to 안 푼 문제 without deleting prior solve/time history.
+- Re-solving clears the manual unseen state; Firebase progress sync includes this state.

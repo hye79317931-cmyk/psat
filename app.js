@@ -569,7 +569,7 @@ function filterProblems(mode, subject, year = '') {
     if (targetYear && normalizedYear(p.year) !== targetYear) return false;
     if (mode === 'wrong') return !!p.wrongActive;
     if (mode === 'slow') return averageTime(p) >= SLOW_MS || (p.lastTimeMs || 0) >= SLOW_MS;
-    if (mode === 'unseen') return !p.attempts;
+    if (mode === 'unseen') return Number(p?.attempts || 0) <= 0 || p?.manualUnseenV72 === true;
     if (mode === 'flagged') return !!p.flagged;
     return true;
   });
@@ -872,6 +872,8 @@ async function checkAnswer(options = {}) {
   const p = state.current;
   const isCorrect = Number(state.selectedAnswer) === Number(p.answer);
 
+  // v72: 수동으로 '안 푼 문제'에 보낸 문제는 다시 채점하는 순간 대기상태 해제.
+  p.manualUnseenV72 = false;
   p.attempts = (p.attempts || 0) + 1;
   p.totalTimeMs = (p.totalTimeMs || 0) + elapsed;
   p.lastTimeMs = elapsed;
@@ -1867,8 +1869,8 @@ function renderStats() {
   const total = state.problems.length;
   const attempts = state.problems.reduce((sum, p) => sum + (p.attempts || 0), 0);
   const correct = state.problems.reduce((sum, p) => sum + (p.correct || 0), 0);
-  const wrongActive = state.problems.filter((p) => p.wrongActive).length;
-  const unseen = state.problems.filter((p) => !p.attempts).length;
+  const wrongActive = state.problems.filter((p) => p.wrongActive && p.manualUnseenV72 !== true).length;
+  const unseen = state.problems.filter((p) => !p.attempts || p.manualUnseenV72 === true).length;
   const slow = state.problems.filter((p) => averageTime(p) >= SLOW_MS || (p.lastTimeMs || 0) >= SLOW_MS).length;
   const avg = attempts ? state.problems.reduce((sum, p) => sum + (p.totalTimeMs || 0), 0) / attempts : 0;
   const flagged = state.problems.filter((p) => p.flagged).length;
@@ -4167,7 +4169,7 @@ function filterProblems(mode, subject, year = "") {
     if (targetYear && normalizedYear(p.year) !== targetYear) return false;
     if (mode === "wrong") return !!p.wrongActive;
     if (mode === "slow") return averageTime(p) >= SLOW_MS || (p.lastTimeMs || 0) >= SLOW_MS;
-    if (mode === "unseen") return !p.attempts;
+    if (mode === "unseen") return Number(p?.attempts || 0) <= 0 || p?.manualUnseenV72 === true;
     if (mode === "flagged") return !!p.flagged;
     return true;
   });
@@ -5434,7 +5436,7 @@ setTimeout(() => {
     // 아직 한 번도 풀지 않은 문제만.
     // 목록 탭과 같은 기본 문제 순서를 유지한다.
     return reviewFiltersV41(state.problems)
-      .filter((p) => !(Number(p.attempts) > 0));
+      .filter((p) => !(Number(p.attempts) > 0) || p?.manualUnseenV72 === true);
   };
 
   const problemItemV41Original = problemItem;
@@ -5841,6 +5843,7 @@ window.psatManualNextLeftV44 = true;
       correctStreak:Number(row?.correctStreak||0),
       flagged:!!row?.flagged,
       annotations:Array.isArray(row?.annotations)?row.annotations:[],
+      manualUnseenV72:row?.manualUnseenV72===true,
       order:Number(row?.order),
       canonicalOrderV60:row?.canonicalOrderV60===true,
       orderModifiedAtV60:Number(row?.orderModifiedAtV60||0),
@@ -5857,7 +5860,7 @@ window.psatManualNextLeftV44 = true;
     const merged={...local};
     for(const k of [
       "attempts","correct","wrong","totalTimeMs","lastTimeMs","lastAnsweredAt",
-      "lastResult","wrongActive","correctStreak","flagged","annotations",
+      "lastResult","wrongActive","correctStreak","flagged","annotations","manualUnseenV72",
       "order","canonicalOrderV60","orderModifiedAtV60"
     ]){
       if(progress[k]!==undefined)merged[k]=progress[k];
@@ -7706,7 +7709,7 @@ window.psatLargeBankV63 = true;
         try { return averageTime(p) >= SLOW_MS || Number(p?.lastTimeMs || 0) >= SLOW_MS; }
         catch { return Number(p?.lastTimeMs || 0) >= 120000; }
       }
-      if (mode === 'unseen') return Number(p?.attempts || 0) <= 0;
+      if (mode === 'unseen') return Number(p?.attempts || 0) <= 0 || p?.manualUnseenV72 === true;
       if (mode === 'flagged') return !!p?.flagged;
       return true;
     });
@@ -7732,7 +7735,7 @@ window.psatLargeBankV63 = true;
       if (yearText && !py.toLowerCase().includes(yearText)) return false;
       if (mode === 'wrong') return !!p?.wrongActive;
       if (mode === 'correct') return Number(p?.correct || 0) > 0 && !p?.wrongActive;
-      if (mode === 'unseen') return Number(p?.attempts || 0) <= 0;
+      if (mode === 'unseen') return Number(p?.attempts || 0) <= 0 || p?.manualUnseenV72 === true;
       return true;
     });
   }
@@ -7852,4 +7855,226 @@ window.psatLargeBankV63 = true;
 
   window.psatDirectSolveV71 = true;
   window.psatMainCandidatesV71 = mainCandidatesV71;
+})();
+
+
+/* === v72: 복습 문제 선택 + 전체선택 + 안 푼 문제로 보내기 ===
+   - 오답/정답 복습에서 체크박스로 문제 선택
+   - 전체선택은 현재 필터의 전체 문제(60개 렌더 제한과 무관)를 선택
+   - 기존 풀이기록/통계는 지우지 않고 manualUnseenV72 플래그로 안 푼 문제 대기열로 이동
+   - 다시 채점하면 manualUnseenV72 자동 해제
+*/
+(function psatReviewBulkToUnseenV72(){
+  const byId = (id) => document.getElementById(id);
+  const selected = new Set();
+  let busy = false;
+
+  function key(id){ return String(id ?? ''); }
+  function isManualUnseen(p){ return p?.manualUnseenV72 === true; }
+
+  function matchesReviewFiltersV72(p){
+    const subject = els.reviewSubjectFilter?.value || '';
+    const category = byId('reviewCategoryFilter')?.value || '';
+    const year = els.reviewYearFilter?.value || '';
+    const yearText = String(els.reviewYearTextFilter?.value || '').trim().toLowerCase();
+    const py = normalizedYear(p?.year);
+    if (subject && !subjectMatches(p, subject)) return false;
+    try {
+      if (typeof categoryMatchesV28 === 'function' && !categoryMatchesV28(p, category)) return false;
+    } catch {
+      if (category && String(p?.category || '') !== category) return false;
+    }
+    if (year && py !== year) return false;
+    if (yearText && !String(py || '').toLowerCase().includes(yearText)) return false;
+    return true;
+  }
+
+  const reviewListBaseV72 = reviewListForMode;
+  reviewListForMode = function(mode){
+    const base = reviewListBaseV72(mode) || [];
+    if (mode === 'unseen') {
+      const seen = new Set(base.map((p) => key(p.id)));
+      const manual = (state.problems || []).filter((p) => isManualUnseen(p) && matchesReviewFiltersV72(p));
+      for (const p of manual) if (!seen.has(key(p.id))) base.push(p);
+      return base;
+    }
+    return base.filter((p) => !isManualUnseen(p));
+  };
+
+  function currentSelectableList(){
+    const mode = state.reviewMode || 'wrong';
+    if (mode === 'unseen') return [];
+    return reviewListForMode(mode).filter((p) => !isManualUnseen(p));
+  }
+
+  function pruneSelection(){
+    const allowed = new Set(currentSelectableList().map((p) => key(p.id)));
+    for (const id of [...selected]) if (!allowed.has(id)) selected.delete(id);
+  }
+
+  function updateToolbar(){
+    const bar = byId('reviewBulkBarV72');
+    const hint = byId('reviewBulkHintV72');
+    const countEl = byId('reviewSelectedCountV72');
+    const allBtn = byId('reviewSelectAllV72');
+    const moveBtn = byId('reviewMoveUnseenV72');
+    const mode = state.reviewMode || 'wrong';
+    const hide = mode === 'unseen';
+    bar?.classList.toggle('hidden', hide);
+    hint?.classList.toggle('hidden', hide);
+    if (hide) selected.clear(); else pruneSelection();
+
+    const list = hide ? [] : currentSelectableList();
+    const allSelected = list.length > 0 && list.every((p) => selected.has(key(p.id)));
+    if (countEl) countEl.textContent = `선택 ${selected.size}개`;
+    if (allBtn) {
+      allBtn.textContent = allSelected ? '전체선택 해제' : `전체선택${list.length ? ` (${list.length})` : ''}`;
+      allBtn.disabled = busy || !list.length;
+    }
+    if (moveBtn) {
+      moveBtn.disabled = busy || selected.size === 0;
+      moveBtn.textContent = busy ? '처리 중...' : '선택한 문제 → 안 푼 문제';
+    }
+  }
+
+  const problemItemBaseV72 = problemItem;
+  problemItem = function(p, wrongOnly, displayNumber = '', reviewMode = ''){
+    const card = problemItemBaseV72(p, wrongOnly, displayNumber, reviewMode);
+
+    if (wrongOnly && reviewMode !== 'unseen' && !isManualUnseen(p)) {
+      const label = document.createElement('label');
+      label.className = 'review-select-v72';
+      label.title = '이 문제 선택';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'review-select-checkbox-v72';
+      input.dataset.id = key(p.id);
+      input.checked = selected.has(key(p.id));
+      const labelText = document.createElement('span');
+      labelText.textContent = '선택';
+      label.append(input, labelText);
+      label.addEventListener('click', (event) => event.stopPropagation());
+      input.addEventListener('click', (event) => event.stopPropagation());
+      input.addEventListener('change', (event) => {
+        event.stopPropagation();
+        const id = key(p.id);
+        if (input.checked) selected.add(id); else selected.delete(id);
+        card.classList.toggle('review-selected-v72', input.checked);
+        updateToolbar();
+      });
+      // 카드의 그리드 열을 깨지 않도록 내용 영역 안에 체크박스를 넣는다.
+      const content = card.querySelector(':scope > div');
+      if (content) content.prepend(label); else card.appendChild(label);
+      card.classList.toggle('review-selected-v72', input.checked);
+    }
+
+    if (wrongOnly && reviewMode === 'unseen' && isManualUnseen(p)) {
+      const paragraphs = card.querySelectorAll(':scope > div > p');
+      if (paragraphs[1]) {
+        let suffix = '';
+        if (p.flagged) suffix += ' · 다시보기 지정';
+        if (p.explanationImageData) suffix += ' · 해설이미지 있음';
+        paragraphs[1].textContent = `안 푼 문제로 이동됨 · 이전 풀이기록 보존${suffix}`;
+      }
+      const detail = card.querySelector('.review-time-detail');
+      if (detail) {
+        const lastTime = p.lastTimeMs ? formatLongTime(p.lastTimeMs) : '기록 없음';
+        const avgTime = (p.attempts || 0) ? formatLongTime(averageTime(p)) : '기록 없음';
+        detail.innerHTML = `
+          <strong>이전 풀이 기록</strong>
+          <span>이전 최근 풀이: ${lastTime}</span>
+          <span>이전 평균 풀이: ${avgTime}</span>
+          <button data-action="solve" data-id="${p.id}" data-context="wrong" type="button">이 문제 풀기</button>
+        `;
+      }
+    }
+    return card;
+  };
+
+  const renderWrongListBaseV72 = renderWrongList;
+  renderWrongList = function(event){
+    const result = renderWrongListBaseV72.apply(this, arguments);
+    updateToolbar();
+    return result;
+  };
+
+  async function moveSelectedToUnseen(){
+    if (busy || !selected.size) return;
+    const ids = [...selected];
+    const count = ids.length;
+    if (!confirm(`${count}개 문제를 안 푼 문제로 보낼까?\n기존 풀이기록과 풀이시간 통계는 지우지 않아.`)) return;
+
+    busy = true;
+    updateToolbar();
+    try {
+      let changed = 0;
+      for (let i = 0; i < ids.length; i += 1) {
+        const id = ids[i];
+        const p = (typeof problemByIdV63 === 'function' ? problemByIdV63(id) : null)
+          || state.problems.find((item) => key(item.id) === id);
+        if (!p) continue;
+        p.manualUnseenV72 = true;
+        p.wrongActive = false;
+        p.correctStreak = 0;
+        await put(STORES.problems, p);
+        changed += 1;
+        if (i > 0 && i % 40 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      selected.clear();
+      try { if (typeof rebuildProblemIndexV63 === 'function') rebuildProblemIndexV63(); } catch {}
+      try { renderStats(); } catch {}
+      renderWrongList();
+      showToast(`${changed}개를 안 푼 문제로 보냈어`);
+    } catch (err) {
+      console.error('v72 bulk unseen failed', err);
+      showToast('안 푼 문제로 보내는 중 오류가 났어');
+    } finally {
+      busy = false;
+      updateToolbar();
+    }
+  }
+
+  function bind(){
+    const allBtn = byId('reviewSelectAllV72');
+    const moveBtn = byId('reviewMoveUnseenV72');
+    if (allBtn && !allBtn.dataset.boundV72) {
+      allBtn.dataset.boundV72 = '1';
+      allBtn.addEventListener('click', () => {
+        const list = currentSelectableList();
+        const allSelected = list.length > 0 && list.every((p) => selected.has(key(p.id)));
+        if (allSelected) for (const p of list) selected.delete(key(p.id));
+        else for (const p of list) selected.add(key(p.id));
+        renderWrongList();
+      });
+    }
+    if (moveBtn && !moveBtn.dataset.boundV72) {
+      moveBtn.dataset.boundV72 = '1';
+      moveBtn.addEventListener('click', moveSelectedToUnseen);
+    }
+
+    for (const id of ['reviewSubjectFilter','reviewCategoryFilter','reviewYearFilter','reviewYearTextFilter']) {
+      const el = byId(id);
+      if (!el || el.dataset.bulkClearBoundV72) continue;
+      el.dataset.bulkClearBoundV72 = '1';
+      const evt = id === 'reviewYearTextFilter' ? 'input' : 'change';
+      el.addEventListener(evt, () => { selected.clear(); setTimeout(updateToolbar, 0); });
+    }
+
+    for (const id of ['reviewWrongBtn','reviewCorrectBtn','reviewUnseenBtn']) {
+      const el = byId(id);
+      if (!el || el.dataset.bulkModeBoundV72) continue;
+      el.dataset.bulkModeBoundV72 = '1';
+      el.addEventListener('click', () => { selected.clear(); setTimeout(updateToolbar, 0); });
+    }
+    updateToolbar();
+  }
+
+  bind();
+  setTimeout(bind, 300);
+  setTimeout(() => {
+    if (byId('wrongView')?.classList.contains('active')) renderWrongList();
+    else updateToolbar();
+  }, 700);
+
+  window.psatReviewBulkV72 = { selected, moveSelectedToUnseen };
 })();

@@ -1,1 +1,1 @@
-PSAT v71 direct-solve fix: uses the same in-memory problem bank as the 720-item list and bypasses the broken solve filter/start wrapper chain
+PSAT v72 review bulk select from verified GitHub main v71: individual or all filtered review problems can be moved to manual unseen while preserving solve history; manual unseen syncs and clears after re-solving

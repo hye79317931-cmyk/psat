@@ -7,7 +7,7 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=71" />
+  <link rel="stylesheet" href="styles.css?v=72" />
 </head>
 <body>
   <header class="app-header">
@@ -272,6 +272,12 @@
           <button id="clearSolvedWrongBtn" class="secondary" type="button">2연속 정답 해제 반영</button>
         </div>
         <div id="reviewListTitle" class="review-list-title">오답복습</div>
+        <div id="reviewBulkBarV72" class="review-bulk-bar-v72">
+          <button id="reviewSelectAllV72" class="secondary" type="button">전체선택</button>
+          <span id="reviewSelectedCountV72" class="review-selected-count-v72">선택 0개</span>
+          <button id="reviewMoveUnseenV72" type="button" disabled>선택한 문제 → 안 푼 문제</button>
+        </div>
+        <p id="reviewBulkHintV72" class="hint review-bulk-hint-v72">전체선택은 현재 대분류·중간분류·연도 필터에 해당하는 문제 전체를 선택해. 기존 풀이기록은 보존돼.</p>
         <div id="wrongList" class="list"></div>
       </section>
     </section>
@@ -371,7 +377,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
-  <script src="app.js?v=71"></script>
+  <script src="app.js?v=72"></script>
 
   <div id="exitSummaryOverlayV49" class="exit-summary-overlay-v49 hidden" role="dialog" aria-modal="true" aria-labelledby="exitSummaryTitleV49">
     <div class="exit-summary-card-v49">
