@@ -1,1 +1,1 @@
-PSAT v73 unseen-review direct fix: the review '안 푼 문제' button now bypasses overlapping legacy review wrappers and directly lists never-attempted or manualUnseenV72 problems from the current state bank; other PSAT behavior is unchanged
+PSAT v74 cascading filters: after choosing a top-level subject, middle-category options are limited to categories that actually exist in that subject, and year/session options are limited to the current subject+category combination across solve, review, and list views; p73 unseen fix and all other behavior remain unchanged

@@ -8164,3 +8164,145 @@ window.psatLargeBankV63 = true;
     open: setUnseenModeV73
   };
 })();
+
+
+/* === v74: 대분류 → 중간분류 → 연도/회차 연동 필터 ===
+   - 대분류를 고르면 그 대분류에 실제로 존재하는 중간분류만 표시
+   - 중간분류까지 고르면 그 조합에 실제로 존재하는 연도/회차만 표시
+   - 문제풀기/복습/목록 세 화면에 동일하게 적용
+   - 문제 데이터, 풀이기록, 필기, 동기화 로직은 변경하지 않음
+*/
+(function psatCascadingFiltersV74(){
+  function q(id){ return document.getElementById(id); }
+
+  function subjectOkV74(problem, subject){
+    if (!subject) return true;
+    try { return subjectMatches(problem, subject); }
+    catch { return canonicalSubject(problem?.subject || '') === subject; }
+  }
+
+  function categoryOfV74(problem){
+    try {
+      if (typeof problemCategoryV28 === 'function') return String(problemCategoryV28(problem) || '').trim();
+    } catch {}
+    return String(problem?.category || '').trim();
+  }
+
+  function categoryOkV74(problem, category){
+    if (!category) return true;
+    return categoryOfV74(problem) === String(category).trim();
+  }
+
+  function sortedCategoriesV74(subject){
+    const set = new Set();
+    for (const p of (Array.isArray(state.problems) ? state.problems : [])) {
+      if (!subjectOkV74(p, subject)) continue;
+      const category = categoryOfV74(p);
+      if (category) set.add(category);
+    }
+    return [...set].sort((a,b)=>a.localeCompare(b,'ko',{numeric:true,sensitivity:'base'}));
+  }
+
+  function sortedYearsV74(subject, category){
+    const set = new Set();
+    for (const p of (Array.isArray(state.problems) ? state.problems : [])) {
+      if (!subjectOkV74(p, subject)) continue;
+      if (!categoryOkV74(p, category)) continue;
+      const year = normalizedYear(p?.year);
+      if (year) set.add(year);
+    }
+    const years = [...set];
+    if (typeof yearCompare === 'function') return years.sort(yearCompare);
+    return years.sort((a,b)=>String(b).localeCompare(String(a),'ko',{numeric:true,sensitivity:'base'}));
+  }
+
+  function refillV74(select, values, keepValue=true){
+    if (!select) return '';
+    const current = keepValue ? String(select.value || '') : '';
+    select.innerHTML = '<option value="">전체</option>';
+    for (const value of values) {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = value;
+      select.appendChild(opt);
+    }
+    if (current && values.includes(current)) select.value = current;
+    else select.value = '';
+    return select.value;
+  }
+
+  function applyGroupV74(group, keepValues=true){
+    const subjectEl = q(group.subject);
+    const categoryEl = q(group.category);
+    const yearEl = q(group.year);
+    if (!subjectEl || !categoryEl || !yearEl) return;
+
+    const subject = String(subjectEl.value || '');
+    const category = refillV74(categoryEl, sortedCategoriesV74(subject), keepValues);
+    refillV74(yearEl, sortedYearsV74(subject, category), keepValues);
+  }
+
+  const groupsV74 = [
+    {name:'solve', subject:'subjectFilter', category:'categoryFilter', year:'yearFilter'},
+    {name:'list', subject:'listSubjectFilter', category:'listCategoryFilter', year:'listYearFilter'},
+    {name:'review', subject:'reviewSubjectFilter', category:'reviewCategoryFilter', year:'reviewYearFilter'}
+  ];
+
+  function refreshGroupViewV74(name){
+    try {
+      if (name === 'list' && typeof renderProblemList === 'function') renderProblemList();
+      if (name === 'review' && typeof renderWrongList === 'function') renderWrongList();
+    } catch (err) {
+      console.warn('v74 linked filter render failed', name, err);
+    }
+  }
+
+  function bindGroupV74(group){
+    const subjectEl = q(group.subject);
+    const categoryEl = q(group.category);
+    if (!subjectEl || !categoryEl) return;
+
+    if (!subjectEl.dataset.cascadeV74) {
+      subjectEl.dataset.cascadeV74 = '1';
+      subjectEl.addEventListener('change', () => {
+        // 대분류가 바뀌면 이전 중간분류/연도 값은 새 대분류와 섞이지 않게 초기화.
+        refillV74(categoryEl, sortedCategoriesV74(String(subjectEl.value || '')), false);
+        const yearEl = q(group.year);
+        refillV74(yearEl, sortedYearsV74(String(subjectEl.value || ''), ''), false);
+        refreshGroupViewV74(group.name);
+      });
+    }
+
+    if (!categoryEl.dataset.cascadeV74) {
+      categoryEl.dataset.cascadeV74 = '1';
+      categoryEl.addEventListener('change', () => {
+        const subject = String(subjectEl.value || '');
+        const category = String(categoryEl.value || '');
+        refillV74(q(group.year), sortedYearsV74(subject, category), false);
+        refreshGroupViewV74(group.name);
+      });
+    }
+  }
+
+  function applyAllV74(keepValues=true){
+    for (const group of groupsV74) applyGroupV74(group, keepValues);
+  }
+
+  // refresh의 기존 전역 필터 재생성 후 마지막에 다시 연동 범위로 좁힌다.
+  const refreshBaseV74 = refresh;
+  refresh = async function(){
+    const result = await refreshBaseV74.apply(this, arguments);
+    applyAllV74(true);
+    return result;
+  };
+
+  for (const group of groupsV74) bindGroupV74(group);
+  applyAllV74(true);
+  setTimeout(() => applyAllV74(true), 700);
+
+  window.psatCascadingFiltersV74 = {
+    applyAll: applyAllV74,
+    categoriesForSubject: sortedCategoriesV74,
+    yearsForSelection: sortedYearsV74
+  };
+})();
