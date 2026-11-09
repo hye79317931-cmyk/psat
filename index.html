@@ -7,7 +7,7 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=72" />
+  <link rel="stylesheet" href="styles.css?v=75" />
 </head>
 <body>
   <header class="app-header">
@@ -79,6 +79,7 @@
           <div class="timer-box">
             <span>현재 문제</span>
             <strong id="questionTimer">00:00</strong>
+            <span id="totalSolveTimerV75" class="total-solve-timer-v75">전체 00:00</span>
             <span id="sessionTimer" class="session-timer hidden">세션 00:00</span>
           </div>
         </div>
@@ -87,6 +88,7 @@
           <div class="left-timer-box" aria-label="풀이 시간">
             <span class="left-timer-label">현재</span>
             <strong id="leftQuestionTimer">00:00</strong>
+            <span id="leftTotalSolveTimerV75" class="left-total-solve-timer-v75">전체 00:00</span>
             <span id="leftSessionTimer" class="left-session-timer hidden">세션 00:00</span>
           </div>
           <button id="exitSolveBtn" class="secondary mini-exit" type="button">중단/나가기</button>
@@ -302,6 +304,33 @@
             <input id="listYearTextFilter" type="search" placeholder="예: 2025, 민경채, 입법" />
           </label>
         </div>
+        <section id="listBulkMetaPanelV75" class="bulk-meta-panel-v75" aria-label="선택 문제 분류 일괄 수정">
+          <h3>선택 문제 분류 일괄 수정</h3>
+          <div class="row wrap bulk-select-row-v75">
+            <button id="listSelectAllV75" class="secondary" type="button">전체선택</button>
+            <strong id="listSelectedCountV75">선택 0개</strong>
+          </div>
+          <div class="grid three bulk-meta-grid-v75">
+            <label>대분류
+              <select id="bulkSubjectV75">
+                <option value="">변경 안 함</option>
+                <option value="언어">언어</option>
+                <option value="자료">자료</option>
+                <option value="상황">상황</option>
+              </select>
+            </label>
+            <label>중간분류
+              <input id="bulkCategoryV75" type="text" list="bulkCategoryListV75" placeholder="비우면 변경 안 함" autocomplete="off" />
+              <datalist id="bulkCategoryListV75"></datalist>
+            </label>
+            <label>연도/회차
+              <input id="bulkYearV75" type="text" list="bulkYearListV75" placeholder="비우면 변경 안 함" autocomplete="off" />
+              <datalist id="bulkYearListV75"></datalist>
+            </label>
+          </div>
+          <button id="bulkMetaApplyV75" type="button">선택한 문제 일괄 수정</button>
+          <p class="hint">선택한 문제만 수정돼. 비워 둔 항목은 기존 값을 그대로 유지해.</p>
+        </section>
         <section class="bulk-year-panel" aria-label="연도/회차 일괄 수정">
           <h3>연도/회차 일괄 수정</h3>
           <div class="grid two">
@@ -377,7 +406,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
-  <script src="app.js?v=74"></script>
+  <script src="app.js?v=75"></script>
 
   <div id="exitSummaryOverlayV49" class="exit-summary-overlay-v49 hidden" role="dialog" aria-modal="true" aria-labelledby="exitSummaryTitleV49">
     <div class="exit-summary-card-v49">

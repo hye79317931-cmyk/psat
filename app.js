@@ -8306,3 +8306,268 @@ window.psatLargeBankV63 = true;
     yearsForSelection: sortedYearsV74
   };
 })();
+
+
+/* === v75: 목록 선택 일괄 분류 수정 + 전체 풀이시간 + 새 풀이 시 기존 필기 초기화 ===
+   - 목록: 개별선택/현재 필터 전체선택 후 대분류·중간분류·연도/회차 중 지정한 값만 일괄 변경
+   - 문제풀기: v74의 대분류→중간분류→연도/회차 연동 및 v71 직접 출제 경로 유지
+   - 풀이화면: 현재 문제시간 아래에 전체 실제 풀이시간(채점 대기시간 제외) 표시
+   - 새 풀이로 문제를 열 때 기존 필기는 삭제, 중단한 세트 이어풀기는 기존 필기 보존
+*/
+(function psatBulkListMetaTimerFreshInkV75(){
+  const q = (id) => document.getElementById(id);
+  const selected = new Set();
+  let bulkBusy = false;
+  let preserveInkOnNextLoad = false;
+
+  function key(id){ return String(id ?? ''); }
+
+  function currentVisibleV75(){
+    try { return (typeof getVisibleProblemList === 'function' ? getVisibleProblemList() : []) || []; }
+    catch { return []; }
+  }
+
+  function updateSuggestionListsV75(){
+    const categoryList = q('bulkCategoryListV75');
+    const yearList = q('bulkYearListV75');
+    if (categoryList) {
+      const categories = [...new Set((state.problems || []).map((p)=>{
+        try { return typeof problemCategoryV28 === 'function' ? problemCategoryV28(p) : String(p?.category || '').trim(); }
+        catch { return String(p?.category || '').trim(); }
+      }).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko',{numeric:true,sensitivity:'base'}));
+      categoryList.innerHTML = categories.map((value)=>`<option value="${escapeHtml(value)}"></option>`).join('');
+    }
+    if (yearList) {
+      const years = [...new Set((state.problems || []).map((p)=>normalizedYear(p?.year)).filter(Boolean))];
+      if (typeof yearCompare === 'function') years.sort(yearCompare);
+      else years.sort((a,b)=>String(b).localeCompare(String(a),'ko',{numeric:true,sensitivity:'base'}));
+      yearList.innerHTML = years.map((value)=>`<option value="${escapeHtml(value)}"></option>`).join('');
+    }
+  }
+
+  function pruneSelectionV75(){
+    const valid = new Set((state.problems || []).map((p)=>key(p.id)));
+    for (const id of [...selected]) if (!valid.has(id)) selected.delete(id);
+  }
+
+  function updateBulkToolbarV75(){
+    pruneSelectionV75();
+    const list = currentVisibleV75();
+    const allSelected = list.length > 0 && list.every((p)=>selected.has(key(p.id)));
+    const countEl = q('listSelectedCountV75');
+    const allBtn = q('listSelectAllV75');
+    const applyBtn = q('bulkMetaApplyV75');
+    if (countEl) countEl.textContent = `선택 ${selected.size}개`;
+    if (allBtn) {
+      allBtn.textContent = allSelected ? '전체선택 해제' : `전체선택${list.length ? ` (${list.length})` : ''}`;
+      allBtn.disabled = bulkBusy || !list.length;
+    }
+    if (applyBtn) {
+      applyBtn.disabled = bulkBusy || selected.size === 0;
+      applyBtn.textContent = bulkBusy ? '수정 중...' : '선택한 문제 일괄 수정';
+    }
+    updateSuggestionListsV75();
+  }
+
+  const problemItemBaseV75 = problemItem;
+  problemItem = function(p, wrongOnly, displayNumber = '', reviewMode = ''){
+    const card = problemItemBaseV75(p, wrongOnly, displayNumber, reviewMode);
+    if (!wrongOnly) {
+      const content = card.querySelector(':scope > div');
+      const label = document.createElement('label');
+      label.className = 'list-select-v75';
+      label.title = '이 문제 선택';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'list-select-checkbox-v75';
+      input.dataset.id = key(p.id);
+      input.checked = selected.has(key(p.id));
+      const span = document.createElement('span');
+      span.textContent = '선택';
+      label.append(input, span);
+      label.addEventListener('click', (event)=>event.stopPropagation());
+      input.addEventListener('click', (event)=>event.stopPropagation());
+      input.addEventListener('change', (event)=>{
+        event.stopPropagation();
+        const id = key(p.id);
+        if (input.checked) selected.add(id); else selected.delete(id);
+        card.classList.toggle('list-selected-v75', input.checked);
+        updateBulkToolbarV75();
+      });
+      if (content) content.prepend(label);
+      else card.appendChild(label);
+      card.classList.toggle('list-selected-v75', input.checked);
+    }
+    return card;
+  };
+
+  const renderProblemListBaseV75 = renderProblemList;
+  renderProblemList = function(event){
+    const result = renderProblemListBaseV75.apply(this, arguments);
+    updateBulkToolbarV75();
+    return result;
+  };
+
+  async function applyBulkMetaV75(){
+    if (bulkBusy || !selected.size) return;
+    const subject = String(q('bulkSubjectV75')?.value || '').trim();
+    const category = String(q('bulkCategoryV75')?.value || '').trim();
+    const year = normalizedYear(q('bulkYearV75')?.value || '');
+    if (!subject && !category && !year) {
+      showToast('바꿀 대분류·중간분류·연도/회차 중 하나를 입력해줘');
+      return;
+    }
+
+    const ids = [...selected];
+    const targets = ids.map((id)=>
+      (typeof problemByIdV63 === 'function' ? problemByIdV63(id) : null)
+      || (state.problems || []).find((p)=>key(p.id)===id)
+    ).filter(Boolean);
+    if (!targets.length) {
+      showToast('선택한 문제가 없어');
+      return;
+    }
+
+    const changes = [
+      subject ? `대분류 ${subject}` : '',
+      category ? `중간분류 ${category}` : '',
+      year ? `연도/회차 ${year}` : ''
+    ].filter(Boolean).join(' · ');
+    if (!confirm(`${targets.length}개 문제를 일괄 수정할까?\n${changes}`)) return;
+
+    bulkBusy = true;
+    updateBulkToolbarV75();
+    try {
+      const now = Date.now();
+      let changed = 0;
+      for (let i=0; i<targets.length; i+=1) {
+        const p = targets[i];
+        if (subject) p.subject = subject;
+        if (category) p.category = category;
+        if (year) p.year = year;
+        p.updatedAt = now;
+        p.contentUpdatedAtV65 = now;
+        await put(STORES.problems, p);
+        changed += 1;
+        if (i > 0 && i % 40 === 0) await new Promise((resolve)=>setTimeout(resolve,0));
+      }
+      selected.clear();
+      if (q('bulkSubjectV75')) q('bulkSubjectV75').value = '';
+      if (q('bulkCategoryV75')) q('bulkCategoryV75').value = '';
+      if (q('bulkYearV75')) q('bulkYearV75').value = '';
+      await refresh();
+      renderProblemList();
+      showToast(`${changed}개 문제 분류를 수정했어`);
+    } catch (err) {
+      console.error('v75 bulk metadata update failed', err);
+      showToast('선택 문제 수정 중 오류가 났어');
+    } finally {
+      bulkBusy = false;
+      updateBulkToolbarV75();
+    }
+  }
+
+  function bindBulkV75(){
+    const allBtn = q('listSelectAllV75');
+    const applyBtn = q('bulkMetaApplyV75');
+    if (allBtn && !allBtn.dataset.v75Bound) {
+      allBtn.dataset.v75Bound = '1';
+      allBtn.addEventListener('click', ()=>{
+        const list = currentVisibleV75();
+        const allSelected = list.length > 0 && list.every((p)=>selected.has(key(p.id)));
+        if (allSelected) for (const p of list) selected.delete(key(p.id));
+        else for (const p of list) selected.add(key(p.id));
+        renderProblemList();
+      });
+    }
+    if (applyBtn && !applyBtn.dataset.v75Bound) {
+      applyBtn.dataset.v75Bound = '1';
+      applyBtn.addEventListener('click', applyBulkMetaV75);
+    }
+
+    for (const [id,evt] of [
+      ['searchInput','input'],
+      ['listSubjectFilter','change'],
+      ['listCategoryFilter','change'],
+      ['listYearFilter','change'],
+      ['listYearTextFilter','input']
+    ]) {
+      const el = q(id);
+      if (!el || el.dataset.v75SelectionReset) continue;
+      el.dataset.v75SelectionReset = '1';
+      el.addEventListener(evt, ()=>{
+        selected.clear();
+        setTimeout(updateBulkToolbarV75,0);
+      });
+    }
+    updateBulkToolbarV75();
+  }
+
+  function totalSolveMsV75(){
+    let total = Math.max(0, Number(state.session?.solveElapsedMsV49 || 0));
+    if (state.current && state.questionStart && !state.checked) {
+      total += Math.max(0, Date.now() - Number(state.questionStart || 0));
+    }
+    return total;
+  }
+
+  function renderTotalSolveTimeV75(){
+    const text = `전체 ${formatTime(totalSolveMsV75())}`;
+    const top = q('totalSolveTimerV75');
+    const left = q('leftTotalSolveTimerV75');
+    if (top) top.textContent = text;
+    if (left) left.textContent = text;
+  }
+
+  const updateTimersBaseV75 = updateTimers;
+  updateTimers = function(){
+    const result = updateTimersBaseV75.apply(this, arguments);
+    renderTotalSolveTimeV75();
+    return result;
+  };
+
+  const checkAnswerBaseV75 = checkAnswer;
+  checkAnswer = async function(){
+    const result = await checkAnswerBaseV75.apply(this, arguments);
+    renderTotalSolveTimeV75();
+    return result;
+  };
+
+  function clearIncomingAnnotationsV75(problem){
+    if (!problem || preserveInkOnNextLoad) return;
+    if (!Array.isArray(problem.annotations) || !problem.annotations.length) return;
+    problem.annotations = [];
+    put(STORES.problems, problem).catch((err)=>console.error('v75 fresh solve ink clear failed', err));
+  }
+
+  const loadCurrentProblemBaseV75 = loadCurrentProblem;
+  loadCurrentProblem = function(problem){
+    clearIncomingAnnotationsV75(problem);
+    const result = loadCurrentProblemBaseV75.apply(this, arguments);
+    renderTotalSolveTimeV75();
+    return result;
+  };
+
+  const resumePausedSessionBaseV75 = resumePausedSession;
+  resumePausedSession = function(){
+    preserveInkOnNextLoad = true;
+    try {
+      return resumePausedSessionBaseV75.apply(this, arguments);
+    } finally {
+      preserveInkOnNextLoad = false;
+    }
+  };
+
+  bindBulkV75();
+  setTimeout(bindBulkV75, 400);
+  setTimeout(()=>{
+    updateBulkToolbarV75();
+    renderTotalSolveTimeV75();
+  },800);
+
+  window.psatV75 = {
+    selectedListIds: selected,
+    applyBulkMeta: applyBulkMetaV75,
+    totalSolveMs: totalSolveMsV75
+  };
+})();

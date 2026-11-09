@@ -2118,3 +2118,63 @@ body > #exitSummaryOverlayV49 {
   .review-bulk-bar-v72 > button { min-height: 42px; }
   #reviewMoveUnseenV72 { flex: 1 1 190px; }
 }
+
+
+/* === v75: 목록 선택 일괄수정 + 전체 풀이시간 === */
+.bulk-meta-panel-v75 {
+  margin: 14px 0 6px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.045);
+}
+.bulk-meta-panel-v75 h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.bulk-select-row-v75 {
+  margin-bottom: 10px;
+}
+#listSelectedCountV75 {
+  font-variant-numeric: tabular-nums;
+}
+.list-select-v75 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.05);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.list-select-v75 input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+.item.list-selected-v75 {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.total-solve-timer-v75 {
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted) !important;
+}
+#solvePanel.fullscreen-solve .left-total-solve-timer-v75 {
+  display: block;
+  margin-top: 1px;
+  font-size: 7.5px;
+  line-height: 1.05;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-height: 640px) {
+  #solvePanel.fullscreen-solve .left-total-solve-timer-v75 {
+    font-size: 7px;
+  }
+}
