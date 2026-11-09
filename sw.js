@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'psat-random-note-v75';
+const CACHE_NAME = 'psat-random-note-v76';
 const ASSETS = [
   './',
   './index.html',

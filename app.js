@@ -7816,12 +7816,17 @@ window.psatLargeBankV63 = true;
     const list = mainCandidatesV71();
     const mode = cleanV71(els.modeSelect?.value) || 'all';
     const subject = cleanV71(els.subjectFilter?.value);
+    const category = cleanV71(document.getElementById('categoryFilter')?.value);
     const year = cleanV71(els.yearFilter?.value);
-    const label = `${subject || '전체'}${year ? ' · ' + year : ''} ${mode === 'all' ? '랜덤' : mode}`;
+    const parts = [subject || '전체', category, year].filter(Boolean);
+    const label = mode === 'ordered'
+      ? `${parts.join(' · ')} 순서대로`
+      : `${subject || '전체'}${year ? ' · ' + year : ''} ${mode === 'all' ? '랜덤' : mode}`;
     coreStartV71(list, {
       count: Number(els.sessionCount?.value || 0),
       minutes: Number(els.sessionMinutes?.value || 0),
-      label
+      label,
+      preserveOrder: mode === 'ordered'
     });
   }, true);
 
@@ -8571,3 +8576,9 @@ window.psatLargeBankV63 = true;
     totalSolveMs: totalSolveMsV75
   };
 })();
+
+
+/* === v76: 출제범위 순서대로 풀기 ===
+   v71 직접 시작 경로에 preserveOrder를 연결해 현재 필터 결과를 목록 순서 그대로 풀이.
+*/
+window.psatOrderedSolveV76 = true;
