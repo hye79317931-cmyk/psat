@@ -1,1 +1,1 @@
-PSAT v76 ordered solve: adds 출제범위 순서대로 풀기 so the current subject/category/year-session filtered problems are solved in the existing list order; all p75 bulk metadata, timers, fresh-ink reset, review, sync, and random modes remain unchanged
+PSAT v77 ordered reverse: 순서대로 풀기는 현재 목록 순서를 변경하지 않고 선택한 대분류/중간분류/연도회차 결과의 마지막 문제부터 역방향으로 풀이; p76 이하 다른 기능은 유지

@@ -7822,7 +7822,7 @@ window.psatLargeBankV63 = true;
     const label = mode === 'ordered'
       ? `${parts.join(' · ')} 순서대로`
       : `${subject || '전체'}${year ? ' · ' + year : ''} ${mode === 'all' ? '랜덤' : mode}`;
-    coreStartV71(list, {
+    coreStartV71(mode === 'ordered' ? [...list].reverse() : list, {
       count: Number(els.sessionCount?.value || 0),
       minutes: Number(els.sessionMinutes?.value || 0),
       label,
@@ -8582,3 +8582,8 @@ window.psatLargeBankV63 = true;
    v71 직접 시작 경로에 preserveOrder를 연결해 현재 필터 결과를 목록 순서 그대로 풀이.
 */
 window.psatOrderedSolveV76 = true;
+
+/* === v77: 순서대로 풀기 역방향 시작 ===
+   목록 자체의 order는 바꾸지 않고, ordered 모드의 풀이 큐만 역순으로 생성.
+*/
+window.psatOrderedReverseV77 = true;
