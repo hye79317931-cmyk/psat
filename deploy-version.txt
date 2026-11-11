@@ -1,1 +1,1 @@
-PSAT v78 PWA update fix: installed app navigations use network-first, manifest start_url moves from stale v67 to v78, and service-worker update bypasses cache; p77 functionality unchanged
+PSAT v79 real exam: separate 40-question/80-minute exam mode with elapsed+remaining time, deferred grading on final submission, numbered navigation, review of wrong/unanswered questions, review deletion and retake; existing solve/review behavior unchanged

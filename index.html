@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#121826" />
   <title>PSAT 랜덤 오답노트</title>
-  <link rel="manifest" href="manifest.webmanifest?v=78" />
+  <link rel="manifest" href="manifest.webmanifest?v=79" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=78" />
+  <link rel="stylesheet" href="styles.css?v=79" />
 </head>
 <body>
   <header class="app-header">
@@ -20,6 +20,8 @@
 
   <nav class="tabs" aria-label="주요 메뉴">
     <button class="tab active" data-view="solveView" type="button">문제풀기</button>
+    <button class="tab" data-view="realExamViewV79" type="button">실전풀기</button>
+    <button class="tab" data-view="realExamReviewViewV79" type="button">실전리뷰</button>
     <button class="tab" data-view="addView" type="button">문제등록</button>
     <button class="tab" data-view="wrongView" type="button">복습</button>
     <button class="tab" data-view="listView" type="button">목록</button>
@@ -349,6 +351,90 @@
       </section>
     </section>
 
+    <section id="realExamViewV79" class="view real-exam-view-v79">
+      <section id="realExamSetupV79" class="card">
+        <h2>실전풀기</h2>
+        <p class="hint">회차별 40문제 · 80분 · 문제당 2.5점 · 시험지 제출 후 일괄 채점</p>
+        <div class="grid two">
+          <label>대분류
+            <select id="realExamSubjectV79"><option value="">선택</option></select>
+          </label>
+          <label>연도/회차
+            <select id="realExamYearV79"><option value="">선택</option></select>
+          </label>
+        </div>
+        <p id="realExamCountV79" class="hint">대분류와 연도/회차를 선택해.</p>
+        <div class="row wrap">
+          <button id="realExamStartV79" type="button" disabled>실전 시작</button>
+          <button id="realExamResumeV79" class="secondary hidden" type="button">진행 중 실전 이어풀기</button>
+        </div>
+      </section>
+
+      <section id="realExamPanelV79" class="card hidden">
+        <div class="real-exam-head-v79">
+          <div>
+            <h2 id="realExamTitleV79">실전 1/40</h2>
+            <p id="realExamMetaV79" class="meta"></p>
+          </div>
+          <div class="real-exam-timers-v79">
+            <span>남은시간 <strong id="realExamRemainV79">80:00</strong></span>
+            <span>경과시간 <strong id="realExamElapsedV79">00:00</strong></span>
+          </div>
+        </div>
+        <div id="realExamImageScrollerV79" class="real-exam-image-scroller-v79">
+          <img id="realExamImageV79" alt="실전 문제 이미지" />
+        </div>
+        <div id="realExamChoicesV79" class="answer-box real-exam-choices-v79" role="group" aria-label="실전 답안 선택">
+          <button class="choice" data-exam-answer="1" type="button">①</button>
+          <button class="choice" data-exam-answer="2" type="button">②</button>
+          <button class="choice" data-exam-answer="3" type="button">③</button>
+          <button class="choice" data-exam-answer="4" type="button">④</button>
+          <button class="choice" data-exam-answer="5" type="button">⑤</button>
+        </div>
+        <div class="row wrap real-exam-actions-v79">
+          <button id="realExamPrevV79" class="secondary" type="button">이전 문제</button>
+          <button id="realExamNextV79" type="button">다음 문제</button>
+          <span id="realExamAnsweredV79" class="badge">답안 0/40</span>
+          <button id="realExamSubmitV79" class="secondary" type="button" disabled>시험지 제출</button>
+          <button id="realExamAbortV79" class="danger-lite" type="button">실전 중단</button>
+        </div>
+        <div class="real-exam-nav-wrap-v79">
+          <strong>문제 이동</strong>
+          <div id="realExamNavV79" class="real-exam-nav-v79" aria-label="실전 문제 이동"></div>
+        </div>
+      </section>
+
+      <section id="realExamResultV79" class="card hidden">
+        <h2>실전 결과</h2>
+        <div id="realExamResultBodyV79" class="real-exam-result-grid-v79"></div>
+        <div class="row wrap">
+          <button id="realExamGoReviewV79" type="button">실전리뷰로 이동</button>
+          <button id="realExamNewV79" class="secondary" type="button">다른 회차 풀기</button>
+        </div>
+      </section>
+    </section>
+
+    <section id="realExamReviewViewV79" class="view real-exam-review-view-v79">
+      <section class="card">
+        <h2>실전문제 리뷰</h2>
+        <div class="grid two">
+          <label>실전 기록
+            <select id="realExamReviewSelectV79"><option value="">기록 없음</option></select>
+          </label>
+        </div>
+        <div class="row wrap">
+          <button id="realExamReviewWrongV79" type="button">틀린 문제 보기</button>
+          <button id="realExamReviewUnansweredV79" class="secondary" type="button">안 푼 문제 보기</button>
+          <button id="realExamReviewRetryV79" class="secondary" type="button">이 회차 다시 풀기</button>
+          <button id="realExamReviewDeleteV79" class="danger-lite" type="button">리뷰 기록 삭제</button>
+        </div>
+        <div id="realExamReviewSummaryV79" class="real-exam-review-summary-v79"></div>
+      </section>
+      <section class="card">
+        <div id="realExamReviewListV79" class="list real-exam-review-list-v79"></div>
+      </section>
+    </section>
+
     <section id="statsView" class="view">
       <section class="card">
         <h2>통계</h2>
@@ -407,7 +493,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
-  <script src="app.js?v=78"></script>
+  <script src="app.js?v=79"></script>
 
   <div id="exitSummaryOverlayV49" class="exit-summary-overlay-v49 hidden" role="dialog" aria-modal="true" aria-labelledby="exitSummaryTitleV49">
     <div class="exit-summary-card-v49">

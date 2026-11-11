@@ -3803,7 +3803,7 @@ function bindEvents() {
 async function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=78', { updateViaCache: 'none' });
+      const reg = await navigator.serviceWorker.register('./sw.js?v=79', { updateViaCache: 'none' });
       await reg.update();
     } catch (err) {
       console.warn('Service worker registration failed', err);
@@ -8588,3 +8588,397 @@ window.psatOrderedSolveV76 = true;
    목록 자체의 order는 바꾸지 않고, ordered 모드의 풀이 큐만 역순으로 생성.
 */
 window.psatOrderedReverseV77 = true;
+
+
+/* === v79: 실전풀기 / 실전문제 리뷰 ===
+   - 기존 일반 풀이/복습 통계와 완전 분리
+   - 대분류+연도/회차 정확히 40문제일 때 시작
+   - 순서대로 풀기(v77)와 같은 역방향 문제 순서
+   - 80분 자동 제출, 전 문항 답변 시 조기 제출 가능
+   - 답안 선택 즉시 채점/이동 없음, 다음 문제 버튼 또는 번호판으로 이동
+   - 결과/리뷰는 localStorage에 별도 저장
+*/
+(function psatRealExamV79(){
+  const q=(id)=>document.getElementById(id);
+  const EXAM_COUNT=40;
+  const EXAM_MS=80*60*1000;
+  const SCORE_PER=2.5;
+  const ACTIVE_KEY='psat-real-exam-active-v79';
+  const RESULTS_KEY='psat-real-exam-results-v79';
+  let active=null;
+  let timer=null;
+  let lastResultId='';
+  let reviewMode='wrong';
+
+  function parse(key,fallback){
+    try { return JSON.parse(localStorage.getItem(key)||'') || fallback; }
+    catch { return fallback; }
+  }
+  function results(){
+    const rows=parse(RESULTS_KEY,[]);
+    return Array.isArray(rows)?rows:[];
+  }
+  function saveResults(rows){
+    localStorage.setItem(RESULTS_KEY, JSON.stringify(rows.slice(0,50)));
+  }
+  function saveActive(){
+    if(active) localStorage.setItem(ACTIVE_KEY,JSON.stringify(active));
+    else localStorage.removeItem(ACTIVE_KEY);
+  }
+  function formatExamTime(ms){
+    const sec=Math.max(0,Math.floor(Number(ms||0)/1000));
+    const m=Math.floor(sec/60).toString().padStart(2,'0');
+    const s=(sec%60).toString().padStart(2,'0');
+    return `${m}:${s}`;
+  }
+  function problemById(id){
+    return typeof problemByIdV63==='function' ? problemByIdV63(id) : state.problems.find(p=>String(p.id)===String(id));
+  }
+  function examCandidates(subject,year){
+    const filtered=state.problems.filter((p)=>{
+      if(subject && !subjectMatches(p,subject)) return false;
+      if(year && normalizedYear(p.year)!==normalizedYear(year)) return false;
+      return true;
+    });
+    const sorted=typeof sortProblemsForDisplay==='function' ? sortProblemsForDisplay(filtered) : [...filtered];
+    return sorted.reverse(); // v77 순서대로 풀기와 동일
+  }
+  function subjects(){
+    return [...new Set(state.problems.map(p=>canonicalSubject(p.subject)).filter(Boolean))]
+      .sort((a,b)=>{
+        const order=['언어','자료','상황'];
+        const ai=order.indexOf(a),bi=order.indexOf(b);
+        if(ai>=0||bi>=0) return (ai<0?99:ai)-(bi<0?99:bi);
+        return a.localeCompare(b,'ko');
+      });
+  }
+  function yearsFor(subject){
+    return [...new Set(state.problems.filter(p=>!subject||subjectMatches(p,subject)).map(p=>normalizedYear(p.year)).filter(Boolean))]
+      .sort(yearCompare);
+  }
+  function fillSelect(select,values,placeholder,current=''){
+    if(!select)return;
+    select.innerHTML='';
+    const first=document.createElement('option'); first.value=''; first.textContent=placeholder; select.appendChild(first);
+    for(const value of values){
+      const opt=document.createElement('option'); opt.value=value; opt.textContent=value; select.appendChild(opt);
+    }
+    if(current && values.includes(current)) select.value=current;
+  }
+  function populateSetup(keep=true){
+    const subj=q('realExamSubjectV79'),year=q('realExamYearV79');
+    if(!subj||!year)return;
+    const oldSub=keep?subj.value:'';
+    const oldYear=keep?year.value:'';
+    fillSelect(subj,subjects(),'대분류 선택',oldSub);
+    fillSelect(year,yearsFor(subj.value),'연도/회차 선택',oldYear);
+    updateCount();
+  }
+  function updateCount(){
+    const subj=q('realExamSubjectV79')?.value||'';
+    const year=q('realExamYearV79')?.value||'';
+    const count=subj&&year?examCandidates(subj,year).length:0;
+    const msg=q('realExamCountV79');
+    const start=q('realExamStartV79');
+    if(msg){
+      if(!subj||!year) msg.textContent='대분류와 연도/회차를 선택해.';
+      else if(count===EXAM_COUNT) msg.textContent=`${subj} · ${year} · 40문제 준비됨`;
+      else msg.textContent=`${subj} · ${year} · 현재 ${count}문제 (실전 시작은 정확히 40문제 필요)`;
+    }
+    if(start) start.disabled=!!active || count!==EXAM_COUNT;
+  }
+  function setPanels(mode){
+    q('realExamSetupV79')?.classList.toggle('hidden',mode==='active');
+    q('realExamPanelV79')?.classList.toggle('hidden',mode!=='active');
+    q('realExamResultV79')?.classList.toggle('hidden',mode!=='result');
+  }
+  function activeProblem(){
+    if(!active)return null;
+    return problemById(active.problemIds[active.index]);
+  }
+  function answeredCount(){
+    if(!active)return 0;
+    return active.problemIds.reduce((n,id)=>n+(Number(active.answers?.[id]||0)>0?1:0),0);
+  }
+  function renderTimers(){
+    if(!active)return;
+    const now=Date.now();
+    const remain=active.endAt-now;
+    const elapsed=Math.min(EXAM_MS,Math.max(0,now-active.startedAt));
+    if(q('realExamRemainV79')) q('realExamRemainV79').textContent=formatExamTime(remain);
+    if(q('realExamElapsedV79')) q('realExamElapsedV79').textContent=formatExamTime(elapsed);
+    if(remain<=0) finalizeExam(true);
+  }
+  function startTimer(){
+    clearInterval(timer);
+    timer=setInterval(renderTimers,250);
+    renderTimers();
+  }
+  function stopTimer(){ clearInterval(timer); timer=null; }
+  function renderNav(){
+    const host=q('realExamNavV79'); if(!host||!active)return;
+    host.innerHTML='';
+    active.problemIds.forEach((id,i)=>{
+      const btn=document.createElement('button');
+      btn.type='button'; btn.textContent=String(i+1);
+      if(Number(active.answers?.[id]||0)>0) btn.classList.add('answered-v79');
+      if(i===active.index) btn.classList.add('current-v79');
+      btn.addEventListener('click',()=>{ active.index=i; saveActive(); renderQuestion(); });
+      host.appendChild(btn);
+    });
+  }
+  function renderQuestion(){
+    if(!active)return;
+    if(Date.now()>=active.endAt){ finalizeExam(true); return; }
+    const p=activeProblem();
+    if(!p){ showToast('실전 문제를 찾을 수 없어'); return; }
+    const n=active.index+1;
+    q('realExamTitleV79').textContent=`실전 ${n}/${EXAM_COUNT}`;
+    q('realExamMetaV79').textContent=`${active.subject} · ${active.year}`;
+    q('realExamImageV79').src=p.imageData||'';
+    const selected=Number(active.answers?.[p.id]||0);
+    q('realExamChoicesV79')?.querySelectorAll('[data-exam-answer]').forEach((btn)=>{
+      btn.classList.toggle('selected',Number(btn.dataset.examAnswer)===selected);
+    });
+    const answered=answeredCount();
+    q('realExamAnsweredV79').textContent=`답안 ${answered}/${EXAM_COUNT}`;
+    q('realExamSubmitV79').disabled=answered!==EXAM_COUNT;
+    q('realExamPrevV79').disabled=active.index<=0;
+    q('realExamNextV79').disabled=active.index>=EXAM_COUNT-1;
+    renderNav();
+    renderTimers();
+    const sc=q('realExamImageScrollerV79'); if(sc){sc.scrollTop=0;sc.scrollLeft=0;}
+  }
+  function startExam(){
+    if(active){ showToast('진행 중인 실전이 있어'); return; }
+    const subject=q('realExamSubjectV79')?.value||'';
+    const year=q('realExamYearV79')?.value||'';
+    const list=examCandidates(subject,year);
+    if(list.length!==EXAM_COUNT){ showToast(`현재 ${list.length}문제야. 정확히 40문제여야 시작할 수 있어`); return; }
+    const now=Date.now();
+    active={
+      id:`exam-${now}-${Math.random().toString(16).slice(2)}`,
+      subject,year,startedAt:now,endAt:now+EXAM_MS,index:0,
+      problemIds:list.map(p=>p.id),answers:{}
+    };
+    saveActive();
+    setPanels('active');
+    renderQuestion();
+    startTimer();
+  }
+  function answerExam(value){
+    if(!active)return;
+    const p=activeProblem(); if(!p)return;
+    active.answers[p.id]=Number(value);
+    saveActive();
+    renderQuestion(); // 선택만 표시, 채점/자동이동 없음
+  }
+  function move(delta){
+    if(!active)return;
+    active.index=Math.max(0,Math.min(EXAM_COUNT-1,active.index+delta));
+    saveActive(); renderQuestion();
+  }
+  function resultForActive(timedOut){
+    const submittedAt=Date.now();
+    const wrongIds=[],unansweredIds=[];
+    let correct=0;
+    active.problemIds.forEach((id)=>{
+      const p=problemById(id);
+      const selected=Number(active.answers?.[id]||0);
+      if(!selected){ unansweredIds.push(id); return; }
+      if(p && selected===Number(p.answer)) correct+=1;
+      else wrongIds.push(id);
+    });
+    return {
+      id:active.id,subject:active.subject,year:active.year,
+      startedAt:active.startedAt,submittedAt,
+      elapsedMs:Math.min(EXAM_MS,Math.max(0,submittedAt-active.startedAt)),
+      timedOut:!!timedOut,problemIds:[...active.problemIds],answers:{...active.answers},
+      correctCount:correct,wrongIds,unansweredIds,score:correct*SCORE_PER
+    };
+  }
+  function renderResult(result){
+    const body=q('realExamResultBodyV79'); if(!body)return;
+    body.innerHTML=`
+      <div><span>점수</span><strong>${result.score}점</strong></div>
+      <div><span>정답</span><strong>${result.correctCount}/40</strong></div>
+      <div><span>오답</span><strong>${result.wrongIds.length}</strong></div>
+      <div><span>미응답</span><strong>${result.unansweredIds.length}</strong></div>
+      <div><span>소요시간</span><strong>${formatExamTime(result.elapsedMs)}</strong></div>`;
+  }
+  function finalizeExam(timedOut=false){
+    if(!active)return;
+    stopTimer();
+    const result=resultForActive(timedOut);
+    const rows=results().filter(r=>r.id!==result.id);
+    rows.unshift(result); saveResults(rows);
+    lastResultId=result.id;
+    active=null; saveActive();
+    renderResult(result); setPanels('result');
+    populateReviewSelect(result.id);
+    showToast(timedOut?'80분이 지나 자동 제출·채점했어':'시험지 제출·채점 완료');
+  }
+  function submitExam(){
+    if(!active)return;
+    if(answeredCount()!==EXAM_COUNT){ showToast('40문제 답안을 모두 체크한 뒤 제출할 수 있어'); return; }
+    if(!confirm('시험지를 제출할까? 제출 후에는 답안을 수정할 수 없어.'))return;
+    finalizeExam(false);
+  }
+  function abortExam(){
+    if(!active)return;
+    if(!confirm('현재 실전을 중단할까? 이 실전 답안은 저장하지 않아.'))return;
+    stopTimer(); active=null; saveActive(); setPanels('setup'); updateResume(); updateCount();
+  }
+  function restoreActive(){
+    const row=parse(ACTIVE_KEY,null);
+    if(!row||!Array.isArray(row.problemIds)||row.problemIds.length!==EXAM_COUNT){ active=null; saveActive(); return; }
+    active=row;
+    updateResume();
+  }
+  function updateResume(){
+    const btn=q('realExamResumeV79');
+    if(btn) btn.classList.toggle('hidden',!active);
+    if(q('realExamStartV79')) q('realExamStartV79').disabled=!!active || q('realExamStartV79').disabled;
+  }
+  function showActive(){
+    if(!active)return;
+    setPanels('active'); renderQuestion(); startTimer();
+  }
+  function showNewSetup(){
+    stopTimer(); setPanels('setup'); populateSetup(true); updateResume();
+  }
+
+  function attemptLabel(r){
+    const d=new Date(Number(r.submittedAt||r.startedAt||Date.now()));
+    const date=`${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    return `${r.subject} · ${r.year} · ${r.score}점 · ${date}`;
+  }
+  function populateReviewSelect(prefer=''){
+    const select=q('realExamReviewSelectV79'); if(!select)return;
+    const rows=results();
+    const current=prefer||select.value;
+    select.innerHTML='';
+    if(!rows.length){ const o=document.createElement('option');o.value='';o.textContent='기록 없음';select.appendChild(o); renderReview(); return; }
+    rows.forEach(r=>{ const o=document.createElement('option');o.value=r.id;o.textContent=attemptLabel(r);select.appendChild(o); });
+    if(current && rows.some(r=>r.id===current)) select.value=current;
+    renderReview();
+  }
+  function selectedResult(){
+    const id=q('realExamReviewSelectV79')?.value||'';
+    return results().find(r=>r.id===id)||null;
+  }
+  function renderReviewSummary(r){
+    const host=q('realExamReviewSummaryV79'); if(!host)return;
+    if(!r){host.innerHTML='<p class="hint">저장된 실전 기록이 없어.</p>';return;}
+    host.innerHTML=`
+      <div><span>점수</span><strong>${r.score}점</strong></div>
+      <div><span>정답</span><strong>${r.correctCount}/40</strong></div>
+      <div><span>오답</span><strong>${r.wrongIds.length}</strong></div>
+      <div><span>미응답</span><strong>${r.unansweredIds.length}</strong></div>
+      <div><span>소요시간</span><strong>${formatExamTime(r.elapsedMs)}</strong></div>`;
+  }
+  function makeReviewCard(r,id){
+    const p=problemById(id);
+    const index=r.problemIds.findIndex(x=>String(x)===String(id));
+    const card=document.createElement('article'); card.className='real-exam-review-card-v79';
+    const title=document.createElement('h3'); title.textContent=`${index+1}번`; card.appendChild(title);
+    const meta=document.createElement('p'); meta.className='meta'; meta.textContent=`${r.subject} · ${r.year}`; card.appendChild(meta);
+    if(!p){ const m=document.createElement('p');m.className='hint';m.textContent='현재 문제은행에서 이 문제를 찾을 수 없어.';card.appendChild(m);return card; }
+    const img=document.createElement('img'); img.loading='lazy'; img.src=p.imageData||''; img.alt=`${index+1}번 문제`; card.appendChild(img);
+    const ans=document.createElement('div'); ans.className='real-exam-review-answer-v79';
+    const mine=Number(r.answers?.[id]||0);
+    ans.innerHTML=`<span>내 답: ${mine?choiceLabel(mine):'미응답'}</span><span>정답: ${choiceLabel(p.answer)}</span>`;
+    card.appendChild(ans);
+    const pages=typeof problemExplanationPagesV61==='function'?problemExplanationPagesV61(p):(p.explanationImageData?[p.explanationImageData]:[]);
+    if(pages.length||String(p.explanation||'').trim()){
+      const exp=document.createElement('div'); exp.className='real-exam-review-explanation-v79';
+      const strong=document.createElement('strong'); strong.textContent='해설'; exp.appendChild(strong);
+      pages.forEach((src,i)=>{ const x=document.createElement('img');x.loading='lazy';x.src=src;x.alt=`해설 ${i+1}쪽`;exp.appendChild(x); });
+      if(String(p.explanation||'').trim()){ const t=document.createElement('p');t.textContent=p.explanation.trim();exp.appendChild(t); }
+      card.appendChild(exp);
+    }
+    return card;
+  }
+  function renderReview(){
+    const r=selectedResult(); renderReviewSummary(r);
+    const host=q('realExamReviewListV79'); if(!host)return;
+    host.innerHTML='';
+    if(!r){host.innerHTML='<p class="hint">리뷰할 기록이 없어.</p>';return;}
+    const ids=reviewMode==='unanswered'?(r.unansweredIds||[]):(r.wrongIds||[]);
+    q('realExamReviewWrongV79')?.classList.toggle('secondary',reviewMode!=='wrong');
+    q('realExamReviewUnansweredV79')?.classList.toggle('secondary',reviewMode!=='unanswered');
+    if(!ids.length){host.innerHTML=`<p class="hint">${reviewMode==='wrong'?'틀린 문제가 없어.':'안 푼 문제가 없어.'}</p>`;return;}
+    ids.forEach(id=>host.appendChild(makeReviewCard(r,id)));
+  }
+  function deleteReview(){
+    const r=selectedResult(); if(!r)return;
+    if(!confirm(`${r.subject} · ${r.year} 실전 리뷰 기록을 삭제할까? 문제 자체는 삭제되지 않아.`))return;
+    saveResults(results().filter(x=>x.id!==r.id));
+    populateReviewSelect(); showToast('실전 리뷰 기록을 삭제했어');
+  }
+  function retrySelected(){
+    const r=selectedResult(); if(!r)return;
+    switchView('realExamViewV79');
+    populateSetup(false);
+    const s=q('realExamSubjectV79'),y=q('realExamYearV79');
+    if(s){s.value=r.subject; fillSelect(y,yearsFor(r.subject),'연도/회차 선택',r.year);}
+    updateCount();
+    setPanels('setup');
+  }
+  function openLatestReview(){
+    switchView('realExamReviewViewV79');
+    populateReviewSelect(lastResultId);
+  }
+
+  function bind(){
+    q('realExamSubjectV79')?.addEventListener('change',()=>{
+      const s=q('realExamSubjectV79')?.value||'';
+      fillSelect(q('realExamYearV79'),yearsFor(s),'연도/회차 선택',''); updateCount();
+    });
+    q('realExamYearV79')?.addEventListener('change',updateCount);
+    q('realExamStartV79')?.addEventListener('click',startExam);
+    q('realExamResumeV79')?.addEventListener('click',showActive);
+    q('realExamChoicesV79')?.addEventListener('click',(e)=>{
+      const b=e.target.closest('[data-exam-answer]'); if(b) answerExam(b.dataset.examAnswer);
+    });
+    q('realExamPrevV79')?.addEventListener('click',()=>move(-1));
+    q('realExamNextV79')?.addEventListener('click',()=>move(1));
+    q('realExamSubmitV79')?.addEventListener('click',submitExam);
+    q('realExamAbortV79')?.addEventListener('click',abortExam);
+    q('realExamGoReviewV79')?.addEventListener('click',openLatestReview);
+    q('realExamNewV79')?.addEventListener('click',showNewSetup);
+    q('realExamReviewSelectV79')?.addEventListener('change',renderReview);
+    q('realExamReviewWrongV79')?.addEventListener('click',()=>{reviewMode='wrong';renderReview();});
+    q('realExamReviewUnansweredV79')?.addEventListener('click',()=>{reviewMode='unanswered';renderReview();});
+    q('realExamReviewDeleteV79')?.addEventListener('click',deleteReview);
+    q('realExamReviewRetryV79')?.addEventListener('click',retrySelected);
+  }
+
+  const baseSwitch=switchView;
+  switchView=function(viewId){
+    const out=baseSwitch.apply(this,arguments);
+    if(viewId==='realExamViewV79'){
+      populateSetup(true);
+      if(active) updateResume();
+      if(!active && q('realExamPanelV79') && !q('realExamPanelV79').classList.contains('hidden')) setPanels('setup');
+    }
+    if(viewId==='realExamReviewViewV79') populateReviewSelect(lastResultId);
+    return out;
+  };
+
+  const baseRefresh=refresh;
+  refresh=async function(){
+    const out=await baseRefresh.apply(this,arguments);
+    populateSetup(true);
+    if(active && Date.now()>=Number(active.endAt||0)) finalizeExam(true);
+    if(q('realExamReviewViewV79')?.classList.contains('active')) populateReviewSelect();
+    return out;
+  };
+
+  bind();
+  restoreActive();
+  setPanels(active?'setup':'setup');
+  setTimeout(()=>{populateSetup(true);updateResume();populateReviewSelect();},700);
+
+  window.psatRealExamV79={startExam,finalizeExam,results,active:()=>active};
+})();

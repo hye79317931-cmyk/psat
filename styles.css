@@ -93,7 +93,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   bottom: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   gap: 6px;
   padding: 8px 8px calc(8px + var(--safe-bottom));
   background: rgba(8,12,24,.92);
@@ -2177,4 +2177,151 @@ body > #exitSummaryOverlayV49 {
   #solvePanel.fullscreen-solve .left-total-solve-timer-v75 {
     font-size: 7px;
   }
+}
+
+
+/* === v79: 실전풀기 / 실전리뷰 === */
+.real-exam-head-v79 {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.real-exam-timers-v79 {
+  min-width: 128px;
+  display: grid;
+  gap: 5px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.real-exam-timers-v79 span {
+  font-size: 13px;
+  color: var(--muted);
+}
+.real-exam-timers-v79 strong {
+  color: var(--text);
+  font-size: 18px;
+  margin-left: 5px;
+}
+.real-exam-image-scroller-v79 {
+  width: 100%;
+  max-height: min(62vh, 760px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  margin-bottom: 12px;
+  touch-action: pan-x pan-y;
+}
+.real-exam-image-scroller-v79 img {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 120px;
+  object-fit: contain;
+}
+.real-exam-choices-v79 .choice.selected {
+  outline: 3px solid var(--accent);
+  outline-offset: 1px;
+}
+.real-exam-actions-v79 {
+  margin-top: 10px;
+}
+.real-exam-nav-wrap-v79 {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.real-exam-nav-v79 {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+.real-exam-nav-v79 button {
+  min-height: 38px;
+  padding: 5px 2px;
+  border-radius: 9px;
+  font-size: 12px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+.real-exam-nav-v79 button.answered-v79 {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.real-exam-nav-v79 button.current-v79 {
+  background: var(--accent);
+  color: #08111f;
+  outline: none;
+}
+.real-exam-result-grid-v79,
+.real-exam-review-summary-v79 {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0,1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+.real-exam-result-grid-v79 > div,
+.real-exam-review-summary-v79 > div {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255,255,255,.04);
+  text-align: center;
+}
+.real-exam-result-grid-v79 span,
+.real-exam-review-summary-v79 span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+.real-exam-result-grid-v79 strong,
+.real-exam-review-summary-v79 strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 18px;
+}
+.real-exam-review-card-v79 {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  margin-bottom: 12px;
+  background: rgba(255,255,255,.035);
+}
+.real-exam-review-card-v79 h3 { margin: 0 0 7px; }
+.real-exam-review-card-v79 .meta { margin-bottom: 8px; }
+.real-exam-review-card-v79 img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 8px auto;
+  border-radius: 10px;
+  background: #fff;
+}
+.real-exam-review-answer-v79 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin: 8px 0;
+  font-weight: 800;
+}
+.real-exam-review-explanation-v79 {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  white-space: pre-wrap;
+}
+@media (max-width: 640px) {
+  .tabs { gap: 3px; padding-left: 5px; padding-right: 5px; }
+  .tab { padding: 6px 2px; font-size: 10.5px; min-height: 50px; }
+  .real-exam-head-v79 { align-items: stretch; }
+  .real-exam-timers-v79 { min-width: 112px; }
+  .real-exam-timers-v79 strong { font-size: 16px; }
+  .real-exam-nav-v79 { grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 5px; }
+  .real-exam-result-grid-v79,
+  .real-exam-review-summary-v79 { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
