@@ -3803,7 +3803,7 @@ function bindEvents() {
 async function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=81', { updateViaCache: 'none' });
+      const reg = await navigator.serviceWorker.register('./sw.js?v=82', { updateViaCache: 'none' });
       await reg.update();
     } catch (err) {
       console.warn('Service worker registration failed', err);
@@ -8590,14 +8590,14 @@ window.psatOrderedSolveV76 = true;
 window.psatOrderedReverseV77 = true;
 
 
-/* === v81: 실전풀기 이동/필기/확대 안정화 ===
+/* === v82: 실전풀기 이동 멈춤 원인 제거 + 필기 저장 분리 ===
    - v79 실전 기능 유지
    - 진행 중 실전 복구 시 시작화면/active 상태 충돌 수정
    - 다음/이전/번호 이동을 단일 goToIndex 경로로 고정
    - 실전 전용 펜/지우개/전체지우기, 문제별 필기 보존
    - 실전 필기는 일반 문제 annotations와 완전 분리
 */
-(function psatRealExamV81(){
+(function psatRealExamV82(){
   const q=(id)=>document.getElementById(id);
   const EXAM_COUNT=40;
   const EXAM_MS=80*60*1000;
@@ -8635,9 +8635,83 @@ window.psatOrderedReverseV77 = true;
     row.index = Math.max(0,Math.min(EXAM_COUNT-1,Number(row.index)||0));
     return row;
   }
+
+  // v82: 진행상태(localStorage)와 필기(IndexedDB)를 분리한다.
+  // 필기 전체를 localStorage에 직렬화하면 S펜 필기가 쌓일수록 다음 문제 이동이 멈출 수 있었다.
+  const EXAM_INK_DB='psat-real-exam-ink-v82';
+  const EXAM_INK_STORE='ink';
+  let examInkDbPromise=null;
+  const inkLoaded=new Set();
+  function openExamInkDb(){
+    if(examInkDbPromise)return examInkDbPromise;
+    examInkDbPromise=new Promise((resolve,reject)=>{
+      const req=indexedDB.open(EXAM_INK_DB,1);
+      req.onerror=()=>reject(req.error);
+      req.onupgradeneeded=()=>{
+        const db=req.result;
+        if(!db.objectStoreNames.contains(EXAM_INK_STORE)) db.createObjectStore(EXAM_INK_STORE,{keyPath:'key'});
+      };
+      req.onsuccess=()=>resolve(req.result);
+    });
+    return examInkDbPromise;
+  }
+  function examInkKey(examId,problemId){return `${examId}::${problemId}`;}
+  async function readInkDb(problemId){
+    if(!active||!problemId)return [];
+    const db=await openExamInkDb();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(EXAM_INK_STORE,'readonly');
+      const req=tx.objectStore(EXAM_INK_STORE).get(examInkKey(active.id,problemId));
+      req.onsuccess=()=>resolve(Array.isArray(req.result?.strokes)?req.result.strokes:[]);
+      req.onerror=()=>reject(req.error);
+    });
+  }
+  async function writeInkDb(problemId){
+    if(!active||!problemId)return;
+    const examId=active.id;
+    const strokes=Array.isArray(active.ink?.[problemId])?active.ink[problemId]:[];
+    const db=await openExamInkDb();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(EXAM_INK_STORE,'readwrite');
+      tx.oncomplete=()=>resolve(); tx.onerror=()=>reject(tx.error);
+      tx.objectStore(EXAM_INK_STORE).put({key:examInkKey(examId,problemId),examId,problemId,strokes});
+    });
+  }
+  async function removeExamInkDb(examId){
+    if(!examId)return;
+    try{
+      const db=await openExamInkDb();
+      await new Promise((resolve,reject)=>{
+        const tx=db.transaction(EXAM_INK_STORE,'readwrite');
+        const store=tx.objectStore(EXAM_INK_STORE);
+        const req=store.openCursor();
+        req.onsuccess=()=>{const c=req.result;if(!c)return;if(c.value?.examId===examId)c.delete();c.continue();};
+        req.onerror=()=>reject(req.error); tx.oncomplete=()=>resolve(); tx.onerror=()=>reject(tx.error);
+      });
+    }catch(err){console.warn('exam ink cleanup failed',err);}
+  }
   function saveActive(){
-    if(active) localStorage.setItem(ACTIVE_KEY,JSON.stringify(active));
-    else localStorage.removeItem(ACTIVE_KEY);
+    try{
+      if(active){
+        const lean={...active};
+        delete lean.ink;
+        localStorage.setItem(ACTIVE_KEY,JSON.stringify(lean));
+      }else localStorage.removeItem(ACTIVE_KEY);
+    }catch(err){
+      console.warn('exam progress save failed',err);
+    }
+  }
+  function ensureInkLoaded(problemId){
+    if(!active||!problemId)return;
+    const key=examInkKey(active.id,problemId);
+    if(inkLoaded.has(key))return;
+    inkLoaded.add(key);
+    readInkDb(problemId).then((strokes)=>{
+      if(!active||examInkKey(active.id,problemId)!==key)return;
+      if(!active.ink||typeof active.ink!=='object')active.ink={};
+      if(!Array.isArray(active.ink[problemId])||active.ink[problemId].length===0) active.ink[problemId]=strokes;
+      if(activeProblem()?.id===problemId)scheduleInkRedraw();
+    }).catch((err)=>console.warn('exam ink load failed',err));
   }
   function formatExamTime(ms){
     const sec=Math.max(0,Math.floor(Number(ms||0)/1000));
@@ -8842,13 +8916,16 @@ window.psatOrderedReverseV77 = true;
     if(!drawing||(drawPointerId!==null&&e.pointerId!==drawPointerId))return;
     if(e.pointerType!=='touch'){e.preventDefault();e.stopPropagation();}
     try{q('realExamInkCanvasV80')?.releasePointerCapture?.(e.pointerId);}catch{}
-    drawing=false; drawPointerId=null; currentStroke=null; scheduleInkRedraw(); saveActive();
+    drawing=false; drawPointerId=null; currentStroke=null; scheduleInkRedraw();
+    const p=activeProblem(); if(p) writeInkDb(p.id).catch((err)=>console.warn('exam ink save failed',err));
   }
   function clearInk(){
     if(!active)return; const p=activeProblem(); if(!p)return;
     if(!confirm('현재 문제의 실전 필기를 전부 지울까?'))return;
     if(!active.ink||typeof active.ink!=='object')active.ink={};
-    active.ink[p.id]=[]; saveActive(); scheduleInkRedraw(); showToast('현재 문제 필기를 지웠어');
+    active.ink[p.id]=[]; inkLoaded.add(examInkKey(active.id,p.id));
+    writeInkDb(p.id).catch((err)=>console.warn('exam ink clear save failed',err));
+    scheduleInkRedraw(); showToast('현재 문제 필기를 지웠어');
   }
 
   function setZoom(value){
@@ -8939,6 +9016,7 @@ window.psatOrderedReverseV77 = true;
       btn.type='button'; btn.textContent=String(i+1); btn.dataset.examIndexV81=String(i);
       if(Number(active.answers?.[id]||0)>0) btn.classList.add('answered-v79');
       if(i===Number(active.index||0)) btn.classList.add('current-v79');
+      btn.onclick=(event)=>{event.preventDefault();goToIndex(i);};
       host.appendChild(btn);
     });
   }
@@ -8969,6 +9047,7 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamNextV79')) q('realExamNextV79').disabled=active.index>=EXAM_COUNT-1;
     updateAnswerUi();
     renderTimers();
+    ensureInkLoaded(p.id);
     prepareInkForImage(resetZoom);
     const sc=q('realExamImageScrollerV79'); if(sc){sc.scrollTop=0;sc.scrollLeft=0;}
   }
@@ -9006,7 +9085,13 @@ window.psatOrderedReverseV77 = true;
     const current=Number(active.index)||0;
     const next=Math.max(0,Math.min(EXAM_COUNT-1,Number(index)||0));
     if(next===current){ renderQuestion(false); return; }
-    active.index=next; resetPointerState(); zoom=1; saveActive(); renderQuestion(true);
+    const leaving=activeProblem()?.id;
+    if(leaving) writeInkDb(leaving).catch((err)=>console.warn('exam ink save before move failed',err));
+    active.index=next;
+    resetPointerState(); zoom=1;
+    // 화면을 먼저 바꾼다. 저장 실패/지연이 다음 문제 이동을 막지 못하게 한다.
+    renderQuestion(true);
+    saveActive();
   }
   function move(delta){
     if(!active)return;
@@ -9047,7 +9132,9 @@ window.psatOrderedReverseV77 = true;
     const rows=results().filter(r=>r.id!==result.id);
     rows.unshift(result); saveResults(rows);
     lastResultId=result.id;
+    const finishedExamId=active.id;
     active=null; saveActive();
+    removeExamInkDb(finishedExamId);
     renderResult(result); setPanels('result');
     populateReviewSelect(result.id);
     updateResume();
@@ -9062,11 +9149,21 @@ window.psatOrderedReverseV77 = true;
   function abortExam(){
     if(!active)return;
     if(!confirm('현재 실전을 중단할까? 이 실전 답안과 실전 필기는 저장하지 않아.'))return;
-    stopTimer(); active=null; saveActive(); setPanels('setup'); updateResume(); updateCount();
+    const abortedExamId=active.id;
+    stopTimer(); active=null; saveActive(); removeExamInkDb(abortedExamId); setPanels('setup'); updateResume(); updateCount();
   }
   function restoreActive(){
     active=normalizeActive(parse(ACTIVE_KEY,null));
     if(!active){ saveActive(); return; }
+    // p81에서 localStorage 안에 저장됐던 필기가 있으면 한 번만 IndexedDB로 이전한다.
+    const legacyInk=active.ink&&typeof active.ink==='object'?active.ink:{};
+    active.ink=legacyInk;
+    for(const [problemId,strokes] of Object.entries(legacyInk)){
+      if(!Array.isArray(strokes))continue;
+      inkLoaded.add(examInkKey(active.id,problemId));
+      writeInkDb(problemId).catch((err)=>console.warn('legacy exam ink migrate failed',err));
+    }
+    saveActive();
     updateResume();
   }
   function updateResume(){
@@ -9171,16 +9268,6 @@ window.psatOrderedReverseV77 = true;
     populateReviewSelect(lastResultId);
   }
 
-  function handleExamNavClickV81(event){
-    const next=event.target?.closest?.('#realExamNextV79');
-    const prev=event.target?.closest?.('#realExamPrevV79');
-    const nav=event.target?.closest?.('#realExamNavV79 button[data-exam-index-v81]');
-    if(!next&&!prev&&!nav)return;
-    if((next||prev)?.disabled)return;
-    event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation();
-    if(next)move(1); else if(prev)move(-1); else goToIndex(Number(nav.dataset.examIndexV81));
-  }
-
   function bind(){
     const subject=q('realExamSubjectV79'); if(subject) subject.onchange=()=>{
       const s=subject.value||''; fillSelect(q('realExamYearV79'),yearsFor(s),'연도/회차 선택',''); updateCount();
@@ -9191,8 +9278,8 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamChoicesV79')) q('realExamChoicesV79').onclick=(e)=>{
       const b=e.target.closest('[data-exam-answer]'); if(b) answerExam(b.dataset.examAnswer);
     };
-    if(q('realExamPrevV79')) q('realExamPrevV79').onclick=null;
-    if(q('realExamNextV79')) q('realExamNextV79').onclick=null;
+    if(q('realExamPrevV79')) q('realExamPrevV79').onclick=(e)=>{e.preventDefault();move(-1);};
+    if(q('realExamNextV79')) q('realExamNextV79').onclick=(e)=>{e.preventDefault();move(1);};
     if(q('realExamSubmitV79')) q('realExamSubmitV79').onclick=submitExam;
     if(q('realExamAbortV79')) q('realExamAbortV79').onclick=abortExam;
     if(q('realExamGoReviewV79')) q('realExamGoReviewV79').onclick=openLatestReview;
@@ -9246,7 +9333,6 @@ window.psatOrderedReverseV77 = true;
     return out;
   };
 
-  document.addEventListener('click',handleExamNavClickV81,true);
   bind();
   restoreActive();
   setPanels('setup');
@@ -9255,5 +9341,5 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamViewV79')?.classList.contains('active') && active) showActive();
   },700);
 
-  window.psatRealExamV81={startExam,finalizeExam,results,active:()=>active,goToIndex,setExamZoom:setZoom,fitExamZoom:fitZoom};
+  window.psatRealExamV82={startExam,finalizeExam,results,active:()=>active,goToIndex,setExamZoom:setZoom,fitExamZoom:fitZoom};
 })();
