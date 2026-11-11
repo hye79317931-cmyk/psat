@@ -3803,7 +3803,7 @@ function bindEvents() {
 async function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=83', { updateViaCache: 'none' });
+      const reg = await navigator.serviceWorker.register('./sw.js?v=84', { updateViaCache: 'none' });
       await reg.update();
     } catch (err) {
       console.warn('Service worker registration failed', err);
@@ -8590,14 +8590,14 @@ window.psatOrderedSolveV76 = true;
 window.psatOrderedReverseV77 = true;
 
 
-/* === v83: 실전 제출 무반응 수정 + p82 이동/필기 저장 분리 유지 ===
+/* === v84: 실전리뷰 직접 전환 안정화 + p83 제출/p82 이동/필기 유지 ===
    - v79 실전 기능 유지
    - 진행 중 실전 복구 시 시작화면/active 상태 충돌 수정
    - 다음/이전/번호 이동을 단일 goToIndex 경로로 고정
    - 실전 전용 펜/지우개/전체지우기, 문제별 필기 보존
    - 실전 필기는 일반 문제 annotations와 완전 분리
 */
-(function psatRealExamV83(){
+(function psatRealExamV84(){
   const q=(id)=>document.getElementById(id);
   const EXAM_COUNT=40;
   const EXAM_MS=80*60*1000;
@@ -8607,6 +8607,7 @@ window.psatOrderedReverseV77 = true;
   let active=null;
   let timer=null;
   let lastResultId='';
+  let latestResult=null; // v84: 제출 직후 저장 실패와 무관하게 바로 리뷰 가능
   let reviewMode='wrong';
   let drawTool='pen';
   let drawing=false;
@@ -8623,7 +8624,9 @@ window.psatOrderedReverseV77 = true;
   }
   function results(){
     const rows=parse(RESULTS_KEY,[]);
-    return Array.isArray(rows)?rows:[];
+    const base=Array.isArray(rows)?rows:[];
+    if(latestResult && !base.some((row)=>row?.id===latestResult.id)) return [latestResult,...base];
+    return base;
   }
   function saveResults(rows){
     localStorage.setItem(RESULTS_KEY, JSON.stringify(rows.slice(0,50)));
@@ -9138,6 +9141,7 @@ window.psatOrderedReverseV77 = true;
     const result=resultForActive(timedOut);
     const finishedExamId=active.id;
     lastResultId=result.id;
+    latestResult=result;
 
     // v83: 결과 저장보다 화면 전환을 먼저 한다.
     // localStorage 저장 오류가 나도 사용자는 채점 결과를 반드시 볼 수 있다.
@@ -9291,9 +9295,37 @@ window.psatOrderedReverseV77 = true;
     if(subj){subj.value=r.subject; fillSelect(year,yearsFor(r.subject),'연도/회차 선택',r.year);}
     updateCount(); setPanels('setup');
   }
+  function showReviewViewDirectV84(){
+    const target=q('realExamReviewViewV79');
+    if(!target){
+      showToast('실전리뷰 화면을 찾을 수 없어');
+      return false;
+    }
+    document.querySelectorAll('.view').forEach((view)=>view.classList.toggle('active',view===target));
+    document.querySelectorAll('.tab').forEach((tab)=>tab.classList.toggle('active',tab.dataset.view==='realExamReviewViewV79'));
+    try{ window.scrollTo({top:0,left:0,behavior:'auto'}); }catch{ window.scrollTo(0,0); }
+    return true;
+  }
   function openLatestReview(){
-    switchView('realExamReviewViewV79');
-    populateReviewSelect(lastResultId);
+    // v84: 여러 버전에서 감싼 switchView 체인을 우회한다.
+    // 제출 직후 저장 실패가 있어도 latestResult를 results()가 보완하므로 리뷰는 열린다.
+    if(!showReviewViewDirectV84())return;
+    try{
+      populateReviewSelect(lastResultId || latestResult?.id || '');
+      renderReview();
+    }catch(err){
+      console.error('real exam review open failed',err);
+      showToast('실전리뷰 표시 중 오류가 났어');
+    }
+  }
+
+  function handleExamReviewV84(event){
+    const btn=event.target?.closest?.('#realExamGoReviewV79');
+    if(!btn)return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    openLatestReview();
   }
 
   function handleExamSubmitV83(event){
@@ -9319,7 +9351,7 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamNextV79')) q('realExamNextV79').onclick=(e)=>{e.preventDefault();move(1);};
     if(q('realExamSubmitV79')) q('realExamSubmitV79').onclick=null;
     if(q('realExamAbortV79')) q('realExamAbortV79').onclick=abortExam;
-    if(q('realExamGoReviewV79')) q('realExamGoReviewV79').onclick=openLatestReview;
+    if(q('realExamGoReviewV79')) q('realExamGoReviewV79').onclick=null;
     if(q('realExamNewV79')) q('realExamNewV79').onclick=showNewSetup;
     if(q('realExamReviewSelectV79')) q('realExamReviewSelectV79').onchange=renderReview;
     if(q('realExamReviewWrongV79')) q('realExamReviewWrongV79').onclick=()=>{reviewMode='wrong';renderReview();};
@@ -9371,6 +9403,7 @@ window.psatOrderedReverseV77 = true;
   };
 
   document.addEventListener('click',handleExamSubmitV83,true);
+  document.addEventListener('click',handleExamReviewV84,true);
   bind();
   restoreActive();
   setPanels('setup');
@@ -9379,5 +9412,5 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamViewV79')?.classList.contains('active') && active) showActive();
   },700);
 
-  window.psatRealExamV83={startExam,finalizeExam,results,active:()=>active,goToIndex,setExamZoom:setZoom,fitExamZoom:fitZoom};
+  window.psatRealExamV84={startExam,finalizeExam,results,active:()=>active,goToIndex,setExamZoom:setZoom,fitExamZoom:fitZoom,openLatestReview};
 })();
