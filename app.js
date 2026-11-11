@@ -3803,7 +3803,7 @@ function bindEvents() {
 async function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=84', { updateViaCache: 'none' });
+      const reg = await navigator.serviceWorker.register('./sw.js?v=85', { updateViaCache: 'none' });
       await reg.update();
     } catch (err) {
       console.warn('Service worker registration failed', err);
@@ -8590,7 +8590,7 @@ window.psatOrderedSolveV76 = true;
 window.psatOrderedReverseV77 = true;
 
 
-/* === v84: 실전리뷰 직접 전환 안정화 + p83 제출/p82 이동/필기 유지 ===
+/* === v85: 실전 화면 크기 고정 + 리뷰 삭제 수정 + p84 리뷰 이동 유지 ===
    - v79 실전 기능 유지
    - 진행 중 실전 복구 시 시작화면/active 상태 충돌 수정
    - 다음/이전/번호 이동을 단일 goToIndex 경로로 고정
@@ -9005,7 +9005,14 @@ window.psatOrderedReverseV77 = true;
   function prepareInkForImage(resetZoom=false){
     const img=q('realExamImageV79'); if(!img)return;
     const ready=()=>requestAnimationFrame(()=>{
-      if(resetZoom)fitZoom(); else {syncCanvasSize();scheduleInkRedraw();}
+      // v85: 문제 이동 때마다 이전 화면 높이를 기준으로 fitZoom을 다시 계산하면
+      // 이미 축소된 상태를 다시 맞춤 계산해 문제 화면이 점점 작아질 수 있었다.
+      // 새 문제는 항상 동일한 100% 폭에서 시작하고, '맞춤'은 사용자가 직접 누를 때만 적용한다.
+      if(resetZoom) setZoom(1);
+      syncCanvasSize();
+      scheduleInkRedraw();
+      const sc=q('realExamImageScrollerV79');
+      if(resetZoom&&sc){sc.scrollLeft=0;sc.scrollTop=0;}
     });
     img.onload=ready;
     if(img.complete&&img.naturalWidth)ready();
@@ -9281,10 +9288,24 @@ window.psatOrderedReverseV77 = true;
     ids.forEach(id=>host.appendChild(makeReviewCard(r,id)));
   }
   function deleteReview(){
-    const r=selectedResult(); if(!r)return;
+    const r=selectedResult(); if(!r){showToast('삭제할 실전 리뷰 기록이 없어');return;}
     if(!confirm(`${r.subject} · ${r.year} 실전 리뷰 기록을 삭제할까? 문제 자체는 삭제되지 않아.`))return;
-    saveResults(results().filter(x=>x.id!==r.id));
-    populateReviewSelect(); showToast('실전 리뷰 기록을 삭제했어');
+    const deleteId=String(r.id||'');
+    try{
+      // v85: results()는 저장 실패 대비 latestResult를 다시 끼워 넣기 때문에
+      // results()를 그대로 필터링하면 방금 제출한 기록이 삭제 직후 다시 살아날 수 있었다.
+      const stored=parse(RESULTS_KEY,[]);
+      const base=Array.isArray(stored)?stored:[];
+      saveResults(base.filter((x)=>String(x?.id||'')!==deleteId));
+      if(latestResult && String(latestResult.id||'')===deleteId) latestResult=null;
+      if(String(lastResultId||'')===deleteId) lastResultId='';
+      populateReviewSelect();
+      renderReview();
+      showToast('실전 리뷰 기록을 삭제했어');
+    }catch(err){
+      console.error('real exam review delete failed',err);
+      showToast('실전 리뷰 기록 삭제 중 오류가 났어');
+    }
   }
   function retrySelected(){
     const r=selectedResult(); if(!r)return;
@@ -9412,5 +9433,5 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamViewV79')?.classList.contains('active') && active) showActive();
   },700);
 
-  window.psatRealExamV84={startExam,finalizeExam,results,active:()=>active,goToIndex,setExamZoom:setZoom,fitExamZoom:fitZoom,openLatestReview};
+  window.psatRealExamV85={startExam,finalizeExam,results,active:()=>active,goToIndex,setExamZoom:setZoom,fitExamZoom:fitZoom,openLatestReview};
 })();
