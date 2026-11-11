@@ -2325,3 +2325,36 @@ body > #exitSummaryOverlayV49 {
   .real-exam-result-grid-v79,
   .real-exam-review-summary-v79 { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
+
+
+/* === v80: 실전풀기 시작/이동 안정화 + 실전 전용 필기 === */
+.real-exam-draw-toolbar-v80 {
+  margin: 0 0 10px;
+  align-items: center;
+}
+.real-exam-image-stage-v80 {
+  position: relative;
+  width: 100%;
+  min-width: 100%;
+  background: #fff;
+}
+.real-exam-image-stage-v80 > img {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 120px;
+  object-fit: contain;
+}
+.real-exam-image-stage-v80 > canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  cursor: crosshair;
+  touch-action: pan-x pan-y;
+}
+.real-exam-draw-toolbar-v80 .active-tool {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

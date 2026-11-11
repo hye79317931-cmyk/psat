@@ -8590,25 +8590,28 @@ window.psatOrderedSolveV76 = true;
 window.psatOrderedReverseV77 = true;
 
 
-/* === v79: 실전풀기 / 실전문제 리뷰 ===
-   - 기존 일반 풀이/복습 통계와 완전 분리
-   - 대분류+연도/회차 정확히 40문제일 때 시작
-   - 순서대로 풀기(v77)와 같은 역방향 문제 순서
-   - 80분 자동 제출, 전 문항 답변 시 조기 제출 가능
-   - 답안 선택 즉시 채점/이동 없음, 다음 문제 버튼 또는 번호판으로 이동
-   - 결과/리뷰는 localStorage에 별도 저장
+/* === v80: 실전풀기 안정화 + 실전 전용 필기 ===
+   - v79 실전 기능 유지
+   - 진행 중 실전 복구 시 시작화면/active 상태 충돌 수정
+   - 다음/이전/번호 이동을 단일 goToIndex 경로로 고정
+   - 실전 전용 펜/지우개/전체지우기, 문제별 필기 보존
+   - 실전 필기는 일반 문제 annotations와 완전 분리
 */
-(function psatRealExamV79(){
+(function psatRealExamV80(){
   const q=(id)=>document.getElementById(id);
   const EXAM_COUNT=40;
   const EXAM_MS=80*60*1000;
   const SCORE_PER=2.5;
-  const ACTIVE_KEY='psat-real-exam-active-v79';
-  const RESULTS_KEY='psat-real-exam-results-v79';
+  const ACTIVE_KEY='psat-real-exam-active-v79'; // v79 진행 중 기록 호환
+  const RESULTS_KEY='psat-real-exam-results-v79'; // 기존 실전리뷰 호환
   let active=null;
   let timer=null;
   let lastResultId='';
   let reviewMode='wrong';
+  let drawTool='pen';
+  let drawing=false;
+  let currentStroke=null;
+  let drawPointerId=null;
 
   function parse(key,fallback){
     try { return JSON.parse(localStorage.getItem(key)||'') || fallback; }
@@ -8620,6 +8623,13 @@ window.psatOrderedReverseV77 = true;
   }
   function saveResults(rows){
     localStorage.setItem(RESULTS_KEY, JSON.stringify(rows.slice(0,50)));
+  }
+  function normalizeActive(row){
+    if(!row || !Array.isArray(row.problemIds) || row.problemIds.length!==EXAM_COUNT) return null;
+    row.answers = row.answers && typeof row.answers==='object' ? row.answers : {};
+    row.ink = row.ink && typeof row.ink==='object' ? row.ink : {};
+    row.index = Math.max(0,Math.min(EXAM_COUNT-1,Number(row.index)||0));
+    return row;
   }
   function saveActive(){
     if(active) localStorage.setItem(ACTIVE_KEY,JSON.stringify(active));
@@ -8641,7 +8651,7 @@ window.psatOrderedReverseV77 = true;
       return true;
     });
     const sorted=typeof sortProblemsForDisplay==='function' ? sortProblemsForDisplay(filtered) : [...filtered];
-    return sorted.reverse(); // v77 순서대로 풀기와 동일
+    return sorted.reverse(); // v77 순서대로 풀기와 동일한 역방향
   }
   function subjects(){
     return [...new Set(state.problems.map(p=>canonicalSubject(p.subject)).filter(Boolean))]
@@ -8681,11 +8691,13 @@ window.psatOrderedReverseV77 = true;
     const msg=q('realExamCountV79');
     const start=q('realExamStartV79');
     if(msg){
-      if(!subj||!year) msg.textContent='대분류와 연도/회차를 선택해.';
+      if(active) msg.textContent=`${active.subject} · ${active.year} 실전이 진행 중이야. 이어풀기를 눌러.`;
+      else if(!subj||!year) msg.textContent='대분류와 연도/회차를 선택해.';
       else if(count===EXAM_COUNT) msg.textContent=`${subj} · ${year} · 40문제 준비됨`;
       else msg.textContent=`${subj} · ${year} · 현재 ${count}문제 (실전 시작은 정확히 40문제 필요)`;
     }
-    if(start) start.disabled=!!active || count!==EXAM_COUNT;
+    if(start) start.disabled=!active && count!==EXAM_COUNT;
+    updateResume();
   }
   function setPanels(mode){
     q('realExamSetupV79')?.classList.toggle('hidden',mode==='active');
@@ -8694,7 +8706,7 @@ window.psatOrderedReverseV77 = true;
   }
   function activeProblem(){
     if(!active)return null;
-    return problemById(active.problemIds[active.index]);
+    return problemById(active.problemIds[Number(active.index)||0]);
   }
   function answeredCount(){
     if(!active)return 0;
@@ -8703,8 +8715,8 @@ window.psatOrderedReverseV77 = true;
   function renderTimers(){
     if(!active)return;
     const now=Date.now();
-    const remain=active.endAt-now;
-    const elapsed=Math.min(EXAM_MS,Math.max(0,now-active.startedAt));
+    const remain=Number(active.endAt||0)-now;
+    const elapsed=Math.min(EXAM_MS,Math.max(0,now-Number(active.startedAt||now)));
     if(q('realExamRemainV79')) q('realExamRemainV79').textContent=formatExamTime(remain);
     if(q('realExamElapsedV79')) q('realExamElapsedV79').textContent=formatExamTime(elapsed);
     if(remain<=0) finalizeExam(true);
@@ -8715,6 +8727,116 @@ window.psatOrderedReverseV77 = true;
     renderTimers();
   }
   function stopTimer(){ clearInterval(timer); timer=null; }
+
+  function currentInk(){
+    if(!active)return [];
+    const p=activeProblem(); if(!p)return [];
+    if(!active.ink || typeof active.ink!=='object') active.ink={};
+    if(!Array.isArray(active.ink[p.id])) active.ink[p.id]=[];
+    return active.ink[p.id];
+  }
+  function setDrawTool(tool){
+    drawTool=tool==='eraser'?'eraser':'pen';
+    q('realExamPenV80')?.classList.toggle('active-tool',drawTool==='pen');
+    q('realExamEraserV80')?.classList.toggle('active-tool',drawTool==='eraser');
+  }
+  function updateSizeLabels(){
+    if(q('realExamPenSizeLabelV80')) q('realExamPenSizeLabelV80').textContent=q('realExamPenSizeV80')?.value||'4';
+    if(q('realExamEraserSizeLabelV80')) q('realExamEraserSizeLabelV80').textContent=q('realExamEraserSizeV80')?.value||'26';
+  }
+  function syncCanvasSize(){
+    const img=q('realExamImageV79'),canvas=q('realExamInkCanvasV80');
+    if(!img||!canvas)return false;
+    const w=Math.max(1,Number(img.naturalWidth)||Math.round(img.getBoundingClientRect().width)||1);
+    const h=Math.max(1,Number(img.naturalHeight)||Math.round(img.getBoundingClientRect().height)||1);
+    if(canvas.width!==w) canvas.width=w;
+    if(canvas.height!==h) canvas.height=h;
+    return w>1 && h>1;
+  }
+  function strokeLineWidth(canvas,stroke){
+    return Math.max(1,Number(stroke?.w||0.004)*canvas.width);
+  }
+  function drawStoredStroke(ctx,canvas,stroke){
+    const pts=Array.isArray(stroke?.p)?stroke.p:[];
+    if(!pts.length)return;
+    ctx.save();
+    ctx.globalCompositeOperation=stroke.t==='eraser'?'destination-out':'source-over';
+    ctx.strokeStyle='#111';
+    ctx.fillStyle='#111';
+    ctx.lineWidth=strokeLineWidth(canvas,stroke);
+    ctx.lineCap='round'; ctx.lineJoin='round';
+    const x0=Math.max(0,Math.min(1,Number(pts[0][0])||0))*canvas.width;
+    const y0=Math.max(0,Math.min(1,Number(pts[0][1])||0))*canvas.height;
+    if(pts.length===1){
+      ctx.beginPath(); ctx.arc(x0,y0,ctx.lineWidth/2,0,Math.PI*2); ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.moveTo(x0,y0);
+      for(let i=1;i<pts.length;i++){
+        const x=Math.max(0,Math.min(1,Number(pts[i][0])||0))*canvas.width;
+        const y=Math.max(0,Math.min(1,Number(pts[i][1])||0))*canvas.height;
+        ctx.lineTo(x,y);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function renderInk(){
+    const canvas=q('realExamInkCanvasV80'); if(!canvas)return;
+    if(!syncCanvasSize())return;
+    const ctx=canvas.getContext('2d'); if(!ctx)return;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    for(const stroke of currentInk()) drawStoredStroke(ctx,canvas,stroke);
+  }
+  function pointFromEvent(e){
+    const canvas=q('realExamInkCanvasV80'); if(!canvas)return null;
+    const rect=canvas.getBoundingClientRect();
+    if(!rect.width||!rect.height)return null;
+    return [
+      Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width)),
+      Math.max(0,Math.min(1,(e.clientY-rect.top)/rect.height))
+    ];
+  }
+  function beginDraw(e){
+    if(!active || e.pointerType==='touch')return;
+    if(typeof e.button==='number' && e.button!==0)return;
+    const pt=pointFromEvent(e); if(!pt)return;
+    e.preventDefault();
+    const canvas=q('realExamInkCanvasV80');
+    try{canvas?.setPointerCapture?.(e.pointerId);}catch{}
+    drawing=true; drawPointerId=e.pointerId;
+    const rect=canvas.getBoundingClientRect();
+    const px=drawTool==='eraser'?Number(q('realExamEraserSizeV80')?.value||26):Number(q('realExamPenSizeV80')?.value||4);
+    currentStroke={t:drawTool,w:Math.max(0.0008,px/Math.max(1,rect.width)),p:[pt]};
+    currentInk().push(currentStroke);
+    renderInk();
+  }
+  function moveDraw(e){
+    if(!drawing || e.pointerId!==drawPointerId || e.pointerType==='touch' || !currentStroke)return;
+    const pt=pointFromEvent(e); if(!pt)return;
+    e.preventDefault();
+    const pts=currentStroke.p;
+    const last=pts[pts.length-1];
+    if(last && Math.hypot(pt[0]-last[0],pt[1]-last[1])<0.0008)return;
+    pts.push(pt); renderInk();
+  }
+  function endDraw(e){
+    if(!drawing || (drawPointerId!==null && e.pointerId!==drawPointerId))return;
+    if(e.pointerType!=='touch') e.preventDefault();
+    drawing=false; drawPointerId=null; currentStroke=null; saveActive();
+  }
+  function clearInk(){
+    if(!active)return;
+    const p=activeProblem(); if(!p)return;
+    if(!active.ink || typeof active.ink!=='object') active.ink={};
+    active.ink[p.id]=[]; saveActive(); renderInk(); showToast('현재 문제 필기를 지웠어');
+  }
+  function prepareInkForImage(){
+    const img=q('realExamImageV79'); if(!img)return;
+    const ready=()=>requestAnimationFrame(()=>{syncCanvasSize();renderInk();});
+    img.onload=ready;
+    if(img.complete && img.naturalWidth) ready();
+  }
+
   function renderNav(){
     const host=q('realExamNavV79'); if(!host||!active)return;
     host.innerHTML='';
@@ -8722,35 +8844,47 @@ window.psatOrderedReverseV77 = true;
       const btn=document.createElement('button');
       btn.type='button'; btn.textContent=String(i+1);
       if(Number(active.answers?.[id]||0)>0) btn.classList.add('answered-v79');
-      if(i===active.index) btn.classList.add('current-v79');
-      btn.addEventListener('click',()=>{ active.index=i; saveActive(); renderQuestion(); });
+      if(i===Number(active.index||0)) btn.classList.add('current-v79');
+      btn.onclick=()=>goToIndex(i);
       host.appendChild(btn);
     });
   }
-  function renderQuestion(){
+  function updateAnswerUi(){
     if(!active)return;
-    if(Date.now()>=active.endAt){ finalizeExam(true); return; }
-    const p=activeProblem();
-    if(!p){ showToast('실전 문제를 찾을 수 없어'); return; }
-    const n=active.index+1;
-    q('realExamTitleV79').textContent=`실전 ${n}/${EXAM_COUNT}`;
-    q('realExamMetaV79').textContent=`${active.subject} · ${active.year}`;
-    q('realExamImageV79').src=p.imageData||'';
+    const p=activeProblem(); if(!p)return;
     const selected=Number(active.answers?.[p.id]||0);
     q('realExamChoicesV79')?.querySelectorAll('[data-exam-answer]').forEach((btn)=>{
       btn.classList.toggle('selected',Number(btn.dataset.examAnswer)===selected);
     });
     const answered=answeredCount();
-    q('realExamAnsweredV79').textContent=`답안 ${answered}/${EXAM_COUNT}`;
-    q('realExamSubmitV79').disabled=answered!==EXAM_COUNT;
-    q('realExamPrevV79').disabled=active.index<=0;
-    q('realExamNextV79').disabled=active.index>=EXAM_COUNT-1;
+    if(q('realExamAnsweredV79')) q('realExamAnsweredV79').textContent=`답안 ${answered}/${EXAM_COUNT}`;
+    if(q('realExamSubmitV79')) q('realExamSubmitV79').disabled=answered!==EXAM_COUNT;
     renderNav();
+  }
+  function renderQuestion(){
+    if(!active)return;
+    if(Date.now()>=Number(active.endAt||0)){ finalizeExam(true); return; }
+    active.index=Math.max(0,Math.min(EXAM_COUNT-1,Number(active.index)||0));
+    const p=activeProblem();
+    if(!p){ showToast('실전 문제를 찾을 수 없어'); return; }
+    const n=active.index+1;
+    if(q('realExamTitleV79')) q('realExamTitleV79').textContent=`실전 ${n}/${EXAM_COUNT}`;
+    if(q('realExamMetaV79')) q('realExamMetaV79').textContent=`${active.subject} · ${active.year}`;
+    const img=q('realExamImageV79');
+    if(img && img.src!==p.imageData) img.src=p.imageData||'';
+    if(q('realExamPrevV79')) q('realExamPrevV79').disabled=active.index<=0;
+    if(q('realExamNextV79')) q('realExamNextV79').disabled=active.index>=EXAM_COUNT-1;
+    updateAnswerUi();
     renderTimers();
+    prepareInkForImage();
     const sc=q('realExamImageScrollerV79'); if(sc){sc.scrollTop=0;sc.scrollLeft=0;}
   }
   function startExam(){
-    if(active){ showToast('진행 중인 실전이 있어'); return; }
+    if(active){
+      showActive();
+      showToast('진행 중인 실전을 이어서 열었어');
+      return;
+    }
     const subject=q('realExamSubjectV79')?.value||'';
     const year=q('realExamYearV79')?.value||'';
     const list=examCandidates(subject,year);
@@ -8759,24 +8893,32 @@ window.psatOrderedReverseV77 = true;
     active={
       id:`exam-${now}-${Math.random().toString(16).slice(2)}`,
       subject,year,startedAt:now,endAt:now+EXAM_MS,index:0,
-      problemIds:list.map(p=>p.id),answers:{}
+      problemIds:list.map(p=>p.id),answers:{},ink:{}
     };
     saveActive();
     setPanels('active');
     renderQuestion();
     startTimer();
+    updateResume();
   }
   function answerExam(value){
     if(!active)return;
     const p=activeProblem(); if(!p)return;
     active.answers[p.id]=Number(value);
     saveActive();
-    renderQuestion(); // 선택만 표시, 채점/자동이동 없음
+    updateAnswerUi(); // 선택만 표시, 채점/자동이동 없음
+  }
+  function goToIndex(index){
+    if(!active)return;
+    const next=Math.max(0,Math.min(EXAM_COUNT-1,Number(index)||0));
+    active.index=next;
+    drawing=false; drawPointerId=null; currentStroke=null;
+    saveActive();
+    renderQuestion();
   }
   function move(delta){
     if(!active)return;
-    active.index=Math.max(0,Math.min(EXAM_COUNT-1,active.index+delta));
-    saveActive(); renderQuestion();
+    goToIndex((Number(active.index)||0)+Number(delta||0));
   }
   function resultForActive(timedOut){
     const submittedAt=Date.now();
@@ -8816,6 +8958,7 @@ window.psatOrderedReverseV77 = true;
     active=null; saveActive();
     renderResult(result); setPanels('result');
     populateReviewSelect(result.id);
+    updateResume();
     showToast(timedOut?'80분이 지나 자동 제출·채점했어':'시험지 제출·채점 완료');
   }
   function submitExam(){
@@ -8826,23 +8969,29 @@ window.psatOrderedReverseV77 = true;
   }
   function abortExam(){
     if(!active)return;
-    if(!confirm('현재 실전을 중단할까? 이 실전 답안은 저장하지 않아.'))return;
+    if(!confirm('현재 실전을 중단할까? 이 실전 답안과 실전 필기는 저장하지 않아.'))return;
     stopTimer(); active=null; saveActive(); setPanels('setup'); updateResume(); updateCount();
   }
   function restoreActive(){
-    const row=parse(ACTIVE_KEY,null);
-    if(!row||!Array.isArray(row.problemIds)||row.problemIds.length!==EXAM_COUNT){ active=null; saveActive(); return; }
-    active=row;
+    active=normalizeActive(parse(ACTIVE_KEY,null));
+    if(!active){ saveActive(); return; }
     updateResume();
   }
   function updateResume(){
     const btn=q('realExamResumeV79');
     if(btn) btn.classList.toggle('hidden',!active);
-    if(q('realExamStartV79')) q('realExamStartV79').disabled=!!active || q('realExamStartV79').disabled;
+    const start=q('realExamStartV79');
+    if(start && active){
+      start.disabled=false;
+      start.textContent='진행 중 실전 열기';
+    } else if(start){
+      start.textContent='실전 시작';
+    }
   }
   function showActive(){
     if(!active)return;
-    setPanels('active'); renderQuestion(); startTimer();
+    if(Date.now()>=Number(active.endAt||0)){ finalizeExam(true); return; }
+    setPanels('active'); renderQuestion(); startTimer(); updateResume();
   }
   function showNewSetup(){
     stopTimer(); setPanels('setup'); populateSetup(true); updateResume();
@@ -8918,12 +9067,12 @@ window.psatOrderedReverseV77 = true;
   }
   function retrySelected(){
     const r=selectedResult(); if(!r)return;
+    if(active){ showActive(); showToast('진행 중인 실전을 먼저 끝내거나 중단해줘'); return; }
     switchView('realExamViewV79');
     populateSetup(false);
-    const s=q('realExamSubjectV79'),y=q('realExamYearV79');
-    if(s){s.value=r.subject; fillSelect(y,yearsFor(r.subject),'연도/회차 선택',r.year);}
-    updateCount();
-    setPanels('setup');
+    const subj=q('realExamSubjectV79'),year=q('realExamYearV79');
+    if(subj){subj.value=r.subject; fillSelect(year,yearsFor(r.subject),'연도/회차 선택',r.year);}
+    updateCount(); setPanels('setup');
   }
   function openLatestReview(){
     switchView('realExamReviewViewV79');
@@ -8931,27 +9080,41 @@ window.psatOrderedReverseV77 = true;
   }
 
   function bind(){
-    q('realExamSubjectV79')?.addEventListener('change',()=>{
-      const s=q('realExamSubjectV79')?.value||'';
-      fillSelect(q('realExamYearV79'),yearsFor(s),'연도/회차 선택',''); updateCount();
-    });
-    q('realExamYearV79')?.addEventListener('change',updateCount);
-    q('realExamStartV79')?.addEventListener('click',startExam);
-    q('realExamResumeV79')?.addEventListener('click',showActive);
-    q('realExamChoicesV79')?.addEventListener('click',(e)=>{
+    const subject=q('realExamSubjectV79'); if(subject) subject.onchange=()=>{
+      const s=subject.value||''; fillSelect(q('realExamYearV79'),yearsFor(s),'연도/회차 선택',''); updateCount();
+    };
+    const year=q('realExamYearV79'); if(year) year.onchange=updateCount;
+    if(q('realExamStartV79')) q('realExamStartV79').onclick=startExam;
+    if(q('realExamResumeV79')) q('realExamResumeV79').onclick=showActive;
+    if(q('realExamChoicesV79')) q('realExamChoicesV79').onclick=(e)=>{
       const b=e.target.closest('[data-exam-answer]'); if(b) answerExam(b.dataset.examAnswer);
-    });
-    q('realExamPrevV79')?.addEventListener('click',()=>move(-1));
-    q('realExamNextV79')?.addEventListener('click',()=>move(1));
-    q('realExamSubmitV79')?.addEventListener('click',submitExam);
-    q('realExamAbortV79')?.addEventListener('click',abortExam);
-    q('realExamGoReviewV79')?.addEventListener('click',openLatestReview);
-    q('realExamNewV79')?.addEventListener('click',showNewSetup);
-    q('realExamReviewSelectV79')?.addEventListener('change',renderReview);
-    q('realExamReviewWrongV79')?.addEventListener('click',()=>{reviewMode='wrong';renderReview();});
-    q('realExamReviewUnansweredV79')?.addEventListener('click',()=>{reviewMode='unanswered';renderReview();});
-    q('realExamReviewDeleteV79')?.addEventListener('click',deleteReview);
-    q('realExamReviewRetryV79')?.addEventListener('click',retrySelected);
+    };
+    if(q('realExamPrevV79')) q('realExamPrevV79').onclick=()=>move(-1);
+    if(q('realExamNextV79')) q('realExamNextV79').onclick=()=>move(1);
+    if(q('realExamSubmitV79')) q('realExamSubmitV79').onclick=submitExam;
+    if(q('realExamAbortV79')) q('realExamAbortV79').onclick=abortExam;
+    if(q('realExamGoReviewV79')) q('realExamGoReviewV79').onclick=openLatestReview;
+    if(q('realExamNewV79')) q('realExamNewV79').onclick=showNewSetup;
+    if(q('realExamReviewSelectV79')) q('realExamReviewSelectV79').onchange=renderReview;
+    if(q('realExamReviewWrongV79')) q('realExamReviewWrongV79').onclick=()=>{reviewMode='wrong';renderReview();};
+    if(q('realExamReviewUnansweredV79')) q('realExamReviewUnansweredV79').onclick=()=>{reviewMode='unanswered';renderReview();};
+    if(q('realExamReviewDeleteV79')) q('realExamReviewDeleteV79').onclick=deleteReview;
+    if(q('realExamReviewRetryV79')) q('realExamReviewRetryV79').onclick=retrySelected;
+
+    if(q('realExamPenV80')) q('realExamPenV80').onclick=()=>setDrawTool('pen');
+    if(q('realExamEraserV80')) q('realExamEraserV80').onclick=()=>setDrawTool('eraser');
+    if(q('realExamClearInkV80')) q('realExamClearInkV80').onclick=clearInk;
+    if(q('realExamPenSizeV80')) q('realExamPenSizeV80').oninput=updateSizeLabels;
+    if(q('realExamEraserSizeV80')) q('realExamEraserSizeV80').oninput=updateSizeLabels;
+    const canvas=q('realExamInkCanvasV80');
+    if(canvas){
+      canvas.onpointerdown=beginDraw;
+      canvas.onpointermove=moveDraw;
+      canvas.onpointerup=endDraw;
+      canvas.onpointercancel=endDraw;
+      canvas.onlostpointercapture=endDraw;
+    }
+    updateSizeLabels(); setDrawTool('pen');
   }
 
   const baseSwitch=switchView;
@@ -8959,8 +9122,8 @@ window.psatOrderedReverseV77 = true;
     const out=baseSwitch.apply(this,arguments);
     if(viewId==='realExamViewV79'){
       populateSetup(true);
-      if(active) updateResume();
-      if(!active && q('realExamPanelV79') && !q('realExamPanelV79').classList.contains('hidden')) setPanels('setup');
+      if(active) showActive();
+      else setPanels('setup');
     }
     if(viewId==='realExamReviewViewV79') populateReviewSelect(lastResultId);
     return out;
@@ -8971,14 +9134,18 @@ window.psatOrderedReverseV77 = true;
     const out=await baseRefresh.apply(this,arguments);
     populateSetup(true);
     if(active && Date.now()>=Number(active.endAt||0)) finalizeExam(true);
+    if(q('realExamViewV79')?.classList.contains('active') && active) showActive();
     if(q('realExamReviewViewV79')?.classList.contains('active')) populateReviewSelect();
     return out;
   };
 
   bind();
   restoreActive();
-  setPanels(active?'setup':'setup');
-  setTimeout(()=>{populateSetup(true);updateResume();populateReviewSelect();},700);
+  setPanels('setup');
+  setTimeout(()=>{
+    populateSetup(true); updateResume(); populateReviewSelect();
+    if(q('realExamViewV79')?.classList.contains('active') && active) showActive();
+  },700);
 
-  window.psatRealExamV79={startExam,finalizeExam,results,active:()=>active};
+  window.psatRealExamV80={startExam,finalizeExam,results,active:()=>active,goToIndex};
 })();

@@ -1,1 +1,1 @@
-PSAT v79 real exam: separate 40-question/80-minute exam mode with elapsed+remaining time, deferred grading on final submission, numbered navigation, review of wrong/unanswered questions, review deletion and retake; existing solve/review behavior unchanged
+PSAT v80 real exam fix: fixes stale active/start-state conflict and next/previous navigation, adds exam-only S Pen/mouse pen, eraser and clear-all with per-question ink preserved during the active exam; v79 exam scoring/review and all normal solve/review behavior unchanged
