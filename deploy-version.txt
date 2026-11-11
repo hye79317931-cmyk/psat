@@ -1,1 +1,1 @@
-PSAT v80 real exam fix: fixes stale active/start-state conflict and next/previous navigation, adds exam-only S Pen/mouse pen, eraser and clear-all with per-question ink preserved during the active exam; v79 exam scoring/review and all normal solve/review behavior unchanged
+PSAT v81 real exam stability: hardens next/previous/number navigation with capture handling, rebuilds exam ink on display-sized DPR canvas for smoother S Pen/eraser, and matches normal solve image viewport with fit/zoom/pinch/pan; p80 scoring/review and normal solve/review remain unchanged

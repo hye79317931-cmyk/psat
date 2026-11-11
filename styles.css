@@ -2358,3 +2358,45 @@ body > #exitSummaryOverlayV49 {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+
+
+/* === v81: 실전 화면비율/확대축소/S펜 안정화 === */
+.real-exam-image-scroller-v79 {
+  overflow: auto;
+  max-height: min(70vh, 900px);
+  border-radius: 18px;
+  background: #f5f5f5;
+  -webkit-overflow-scrolling: touch;
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+.real-exam-image-stage-v80 {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+  min-width: 0;
+  vertical-align: top;
+  background: #fff;
+}
+.real-exam-image-stage-v80 > img {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.real-exam-image-stage-v80 > canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: crosshair;
+}
+.real-exam-image-scroller-v79.panning { cursor: grabbing; }
+#realExamZoomLabelV81 { min-width: 58px; }

@@ -3803,7 +3803,7 @@ function bindEvents() {
 async function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=79', { updateViaCache: 'none' });
+      const reg = await navigator.serviceWorker.register('./sw.js?v=81', { updateViaCache: 'none' });
       await reg.update();
     } catch (err) {
       console.warn('Service worker registration failed', err);
@@ -8590,14 +8590,14 @@ window.psatOrderedSolveV76 = true;
 window.psatOrderedReverseV77 = true;
 
 
-/* === v80: 실전풀기 안정화 + 실전 전용 필기 ===
+/* === v81: 실전풀기 이동/필기/확대 안정화 ===
    - v79 실전 기능 유지
    - 진행 중 실전 복구 시 시작화면/active 상태 충돌 수정
    - 다음/이전/번호 이동을 단일 goToIndex 경로로 고정
    - 실전 전용 펜/지우개/전체지우기, 문제별 필기 보존
    - 실전 필기는 일반 문제 annotations와 완전 분리
 */
-(function psatRealExamV80(){
+(function psatRealExamV81(){
   const q=(id)=>document.getElementById(id);
   const EXAM_COUNT=40;
   const EXAM_MS=80*60*1000;
@@ -8612,6 +8612,10 @@ window.psatOrderedReverseV77 = true;
   let drawing=false;
   let currentStroke=null;
   let drawPointerId=null;
+  let zoom=1;
+  let redrawRaf=0;
+  const touchPointers=new Map();
+  let gesture=null;
 
   function parse(key,fallback){
     try { return JSON.parse(localStorage.getItem(key)||'') || fallback; }
@@ -8744,97 +8748,187 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamPenSizeLabelV80')) q('realExamPenSizeLabelV80').textContent=q('realExamPenSizeV80')?.value||'4';
     if(q('realExamEraserSizeLabelV80')) q('realExamEraserSizeLabelV80').textContent=q('realExamEraserSizeV80')?.value||'26';
   }
+  function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
+  function resetPointerState(){
+    drawing=false; drawPointerId=null; currentStroke=null;
+    touchPointers.clear(); gesture=null;
+    q('realExamImageScrollerV79')?.classList.remove('panning');
+  }
   function syncCanvasSize(){
-    const img=q('realExamImageV79'),canvas=q('realExamInkCanvasV80');
-    if(!img||!canvas)return false;
-    const w=Math.max(1,Number(img.naturalWidth)||Math.round(img.getBoundingClientRect().width)||1);
-    const h=Math.max(1,Number(img.naturalHeight)||Math.round(img.getBoundingClientRect().height)||1);
-    if(canvas.width!==w) canvas.width=w;
-    if(canvas.height!==h) canvas.height=h;
-    return w>1 && h>1;
+    const img=q('realExamImageV79'),stage=q('realExamImageStageV80'),canvas=q('realExamInkCanvasV80');
+    if(!img||!stage||!canvas||!img.complete)return false;
+    const width=Math.max(1,Math.round(stage.clientWidth||img.getBoundingClientRect().width||0));
+    const height=Math.max(1,Math.round(img.clientHeight||img.getBoundingClientRect().height||0));
+    if(width<=1||height<=1)return false;
+    const dpr=Math.max(1,Number(window.devicePixelRatio)||1);
+    const bw=Math.max(1,Math.round(width*dpr)), bh=Math.max(1,Math.round(height*dpr));
+    if(canvas.width!==bw||canvas.height!==bh){ canvas.width=bw; canvas.height=bh; }
+    canvas.style.width=`${width}px`; canvas.style.height=`${height}px`;
+    stage.style.height=`${height}px`;
+    return true;
   }
-  function strokeLineWidth(canvas,stroke){
-    return Math.max(1,Number(stroke?.w||0.004)*canvas.width);
+  function canvasContext(){
+    const canvas=q('realExamInkCanvasV80'); if(!canvas)return null;
+    const ctx=canvas.getContext('2d'); if(!ctx)return null;
+    const dpr=Math.max(1,Number(window.devicePixelRatio)||1);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    return ctx;
   }
-  function drawStoredStroke(ctx,canvas,stroke){
-    const pts=Array.isArray(stroke?.p)?stroke.p:[];
-    if(!pts.length)return;
+  function drawStoredStroke(ctx,width,height,stroke){
+    const pts=Array.isArray(stroke?.p)?stroke.p:[]; if(!pts.length)return;
     ctx.save();
     ctx.globalCompositeOperation=stroke.t==='eraser'?'destination-out':'source-over';
-    ctx.strokeStyle='#111';
-    ctx.fillStyle='#111';
-    ctx.lineWidth=strokeLineWidth(canvas,stroke);
+    ctx.strokeStyle='#111'; ctx.fillStyle='#111';
+    ctx.lineWidth=Math.max(1,Number(stroke?.w||0.004)*width);
     ctx.lineCap='round'; ctx.lineJoin='round';
-    const x0=Math.max(0,Math.min(1,Number(pts[0][0])||0))*canvas.width;
-    const y0=Math.max(0,Math.min(1,Number(pts[0][1])||0))*canvas.height;
+    const xy=(p)=>[clamp(Number(p?.[0])||0,0,1)*width,clamp(Number(p?.[1])||0,0,1)*height];
+    const [x0,y0]=xy(pts[0]);
     if(pts.length===1){
       ctx.beginPath(); ctx.arc(x0,y0,ctx.lineWidth/2,0,Math.PI*2); ctx.fill();
-    } else {
+    }else{
       ctx.beginPath(); ctx.moveTo(x0,y0);
-      for(let i=1;i<pts.length;i++){
-        const x=Math.max(0,Math.min(1,Number(pts[i][0])||0))*canvas.width;
-        const y=Math.max(0,Math.min(1,Number(pts[i][1])||0))*canvas.height;
-        ctx.lineTo(x,y);
-      }
+      for(let i=1;i<pts.length;i++){ const [x,y]=xy(pts[i]); ctx.lineTo(x,y); }
       ctx.stroke();
     }
     ctx.restore();
   }
-  function renderInk(){
-    const canvas=q('realExamInkCanvasV80'); if(!canvas)return;
-    if(!syncCanvasSize())return;
-    const ctx=canvas.getContext('2d'); if(!ctx)return;
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    for(const stroke of currentInk()) drawStoredStroke(ctx,canvas,stroke);
+  function renderInkNow(){
+    const canvas=q('realExamInkCanvasV80'); if(!canvas||!syncCanvasSize())return;
+    const ctx=canvasContext(); if(!ctx)return;
+    const dpr=Math.max(1,Number(window.devicePixelRatio)||1);
+    ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.setTransform(dpr,0,0,dpr,0,0);
+    const width=canvas.clientWidth||1, height=canvas.clientHeight||1;
+    for(const stroke of currentInk()) drawStoredStroke(ctx,width,height,stroke);
+  }
+  function scheduleInkRedraw(){
+    if(redrawRaf)return;
+    redrawRaf=requestAnimationFrame(()=>{ redrawRaf=0; renderInkNow(); });
   }
   function pointFromEvent(e){
     const canvas=q('realExamInkCanvasV80'); if(!canvas)return null;
-    const rect=canvas.getBoundingClientRect();
-    if(!rect.width||!rect.height)return null;
-    return [
-      Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width)),
-      Math.max(0,Math.min(1,(e.clientY-rect.top)/rect.height))
-    ];
+    const rect=canvas.getBoundingClientRect(); if(!rect.width||!rect.height)return null;
+    return [clamp((e.clientX-rect.left)/rect.width,0,1),clamp((e.clientY-rect.top)/rect.height,0,1)];
+  }
+  function canDraw(e){
+    if(!active||e.pointerType==='touch')return false;
+    if(e.pointerType==='mouse' && e.button!==0 && e.buttons!==1)return false;
+    return true; // S펜(pointerType=pen) 포함
   }
   function beginDraw(e){
-    if(!active || e.pointerType==='touch')return;
-    if(typeof e.button==='number' && e.button!==0)return;
+    if(!canDraw(e))return;
     const pt=pointFromEvent(e); if(!pt)return;
-    e.preventDefault();
+    e.preventDefault(); e.stopPropagation();
     const canvas=q('realExamInkCanvasV80');
     try{canvas?.setPointerCapture?.(e.pointerId);}catch{}
     drawing=true; drawPointerId=e.pointerId;
     const rect=canvas.getBoundingClientRect();
     const px=drawTool==='eraser'?Number(q('realExamEraserSizeV80')?.value||26):Number(q('realExamPenSizeV80')?.value||4);
     currentStroke={t:drawTool,w:Math.max(0.0008,px/Math.max(1,rect.width)),p:[pt]};
-    currentInk().push(currentStroke);
-    renderInk();
+    currentInk().push(currentStroke); scheduleInkRedraw();
   }
   function moveDraw(e){
-    if(!drawing || e.pointerId!==drawPointerId || e.pointerType==='touch' || !currentStroke)return;
-    const pt=pointFromEvent(e); if(!pt)return;
-    e.preventDefault();
+    if(!drawing||e.pointerId!==drawPointerId||!currentStroke||e.pointerType==='touch')return;
+    e.preventDefault(); e.stopPropagation();
+    const packets=typeof e.getCoalescedEvents==='function' ? e.getCoalescedEvents() : [e];
     const pts=currentStroke.p;
-    const last=pts[pts.length-1];
-    if(last && Math.hypot(pt[0]-last[0],pt[1]-last[1])<0.0008)return;
-    pts.push(pt); renderInk();
+    for(const ev of packets){
+      const pt=pointFromEvent(ev); if(!pt)continue;
+      const last=pts[pts.length-1];
+      if(!last||Math.hypot(pt[0]-last[0],pt[1]-last[1])>=0.00035) pts.push(pt);
+    }
+    scheduleInkRedraw();
   }
   function endDraw(e){
-    if(!drawing || (drawPointerId!==null && e.pointerId!==drawPointerId))return;
-    if(e.pointerType!=='touch') e.preventDefault();
-    drawing=false; drawPointerId=null; currentStroke=null; saveActive();
+    if(!drawing||(drawPointerId!==null&&e.pointerId!==drawPointerId))return;
+    if(e.pointerType!=='touch'){e.preventDefault();e.stopPropagation();}
+    try{q('realExamInkCanvasV80')?.releasePointerCapture?.(e.pointerId);}catch{}
+    drawing=false; drawPointerId=null; currentStroke=null; scheduleInkRedraw(); saveActive();
   }
   function clearInk(){
-    if(!active)return;
-    const p=activeProblem(); if(!p)return;
-    if(!active.ink || typeof active.ink!=='object') active.ink={};
-    active.ink[p.id]=[]; saveActive(); renderInk(); showToast('현재 문제 필기를 지웠어');
+    if(!active)return; const p=activeProblem(); if(!p)return;
+    if(!confirm('현재 문제의 실전 필기를 전부 지울까?'))return;
+    if(!active.ink||typeof active.ink!=='object')active.ink={};
+    active.ink[p.id]=[]; saveActive(); scheduleInkRedraw(); showToast('현재 문제 필기를 지웠어');
   }
-  function prepareInkForImage(){
+
+  function setZoom(value){
+    zoom=clamp(Number(value)||1,0.05,5);
+    const stage=q('realExamImageStageV80'); if(stage)stage.style.width=`${zoom*100}%`;
+    if(q('realExamZoomLabelV81'))q('realExamZoomLabelV81').textContent=`${Math.round(zoom*100)}%`;
+    requestAnimationFrame(()=>{syncCanvasSize();scheduleInkRedraw();});
+  }
+  function setZoomAround(value,clientX,clientY,fixedX=null,fixedY=null){
+    const sc=q('realExamImageScrollerV79'); if(!sc)return;
+    const rect=sc.getBoundingClientRect();
+    const viewX=clamp(clientX-rect.left,0,rect.width), viewY=clamp(clientY-rect.top,0,rect.height);
+    const old=zoom||1;
+    const contentX=fixedX??((sc.scrollLeft+viewX)/old), contentY=fixedY??((sc.scrollTop+viewY)/old);
+    setZoom(value);
+    sc.scrollLeft=Math.max(0,contentX*zoom-viewX); sc.scrollTop=Math.max(0,contentY*zoom-viewY);
+  }
+  function zoomFromCenter(delta){
+    const sc=q('realExamImageScrollerV79'); if(!sc)return;
+    const r=sc.getBoundingClientRect(); setZoomAround(zoom+delta,r.left+r.width/2,r.top+r.height/2);
+  }
+  function fitZoom(){
+    const img=q('realExamImageV79'),sc=q('realExamImageScrollerV79');
+    if(!img||!sc||!img.naturalWidth||!img.naturalHeight||!sc.clientWidth)return;
+    const baseW=sc.clientWidth, baseH=baseW*(img.naturalHeight/img.naturalWidth);
+    const fitByHeight=(Math.max(120,sc.clientHeight)-12)/Math.max(1,baseH);
+    setZoom(Math.min(1,Math.max(0.05,fitByHeight)));
+    sc.scrollLeft=0; sc.scrollTop=0;
+  }
+  function distance(a,b){return Math.hypot(a.x-b.x,a.y-b.y)||1;}
+  function center(a,b){return{x:(a.x+b.x)/2,y:(a.y+b.y)/2};}
+  function touchList(){return Array.from(touchPointers.values());}
+  function beginPan(p){
+    const sc=q('realExamImageScrollerV79'); if(!sc)return;
+    gesture={type:'pan',id:p.id,startX:p.x,startY:p.y,left:sc.scrollLeft,top:sc.scrollTop}; sc.classList.add('panning');
+  }
+  function beginPinch(list){
+    if(list.length<2)return; const sc=q('realExamImageScrollerV79'); if(!sc)return;
+    const [a,b]=list,c=center(a,b),r=sc.getBoundingClientRect();
+    gesture={type:'pinch',dist:distance(a,b),zoom,contentX:(sc.scrollLeft+c.x-r.left)/zoom,contentY:(sc.scrollTop+c.y-r.top)/zoom};
+    sc.classList.add('panning');
+  }
+  function touchDown(e){
+    if(!active||e.pointerType!=='touch')return;
+    e.preventDefault(); e.stopPropagation();
+    try{q('realExamInkCanvasV80')?.setPointerCapture?.(e.pointerId);}catch{}
+    touchPointers.set(e.pointerId,{id:e.pointerId,x:e.clientX,y:e.clientY});
+    const list=touchList(); if(list.length>=2)beginPinch(list); else beginPan(list[0]);
+  }
+  function touchMove(e){
+    if(e.pointerType!=='touch'||!touchPointers.has(e.pointerId))return;
+    e.preventDefault(); e.stopPropagation();
+    touchPointers.set(e.pointerId,{id:e.pointerId,x:e.clientX,y:e.clientY});
+    const list=touchList(),sc=q('realExamImageScrollerV79'); if(!sc)return;
+    if(list.length>=2){
+      if(!gesture||gesture.type!=='pinch')beginPinch(list);
+      const [a,b]=list,c=center(a,b),ratio=distance(a,b)/Math.max(1,gesture.dist||distance(a,b));
+      setZoomAround(gesture.zoom*ratio,c.x,c.y,gesture.contentX,gesture.contentY); return;
+    }
+    if(list.length===1){
+      const p=list[0]; if(!gesture||gesture.type!=='pan'||gesture.id!==p.id)beginPan(p);
+      sc.scrollLeft=gesture.left-(p.x-gesture.startX); sc.scrollTop=gesture.top-(p.y-gesture.startY);
+    }
+  }
+  function touchEnd(e){
+    if(e.pointerType!=='touch'||!touchPointers.has(e.pointerId))return;
+    e.preventDefault(); e.stopPropagation(); touchPointers.delete(e.pointerId);
+    try{q('realExamInkCanvasV80')?.releasePointerCapture?.(e.pointerId);}catch{}
+    const list=touchList(); if(list.length>=2)beginPinch(list); else if(list.length===1)beginPan(list[0]); else {gesture=null;q('realExamImageScrollerV79')?.classList.remove('panning');}
+  }
+  function canvasDown(e){ if(e.pointerType==='touch')touchDown(e); else beginDraw(e); }
+  function canvasMove(e){ if(e.pointerType==='touch')touchMove(e); else moveDraw(e); }
+  function canvasEnd(e){ if(e.pointerType==='touch')touchEnd(e); else endDraw(e); }
+  function prepareInkForImage(resetZoom=false){
     const img=q('realExamImageV79'); if(!img)return;
-    const ready=()=>requestAnimationFrame(()=>{syncCanvasSize();renderInk();});
+    const ready=()=>requestAnimationFrame(()=>{
+      if(resetZoom)fitZoom(); else {syncCanvasSize();scheduleInkRedraw();}
+    });
     img.onload=ready;
-    if(img.complete && img.naturalWidth) ready();
+    if(img.complete&&img.naturalWidth)ready();
   }
 
   function renderNav(){
@@ -8842,10 +8936,9 @@ window.psatOrderedReverseV77 = true;
     host.innerHTML='';
     active.problemIds.forEach((id,i)=>{
       const btn=document.createElement('button');
-      btn.type='button'; btn.textContent=String(i+1);
+      btn.type='button'; btn.textContent=String(i+1); btn.dataset.examIndexV81=String(i);
       if(Number(active.answers?.[id]||0)>0) btn.classList.add('answered-v79');
       if(i===Number(active.index||0)) btn.classList.add('current-v79');
-      btn.onclick=()=>goToIndex(i);
       host.appendChild(btn);
     });
   }
@@ -8861,7 +8954,7 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamSubmitV79')) q('realExamSubmitV79').disabled=answered!==EXAM_COUNT;
     renderNav();
   }
-  function renderQuestion(){
+  function renderQuestion(resetZoom=false){
     if(!active)return;
     if(Date.now()>=Number(active.endAt||0)){ finalizeExam(true); return; }
     active.index=Math.max(0,Math.min(EXAM_COUNT-1,Number(active.index)||0));
@@ -8871,12 +8964,12 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamTitleV79')) q('realExamTitleV79').textContent=`실전 ${n}/${EXAM_COUNT}`;
     if(q('realExamMetaV79')) q('realExamMetaV79').textContent=`${active.subject} · ${active.year}`;
     const img=q('realExamImageV79');
-    if(img && img.src!==p.imageData) img.src=p.imageData||'';
+    if(img){ const src=p.imageData||''; if(img.getAttribute('src')!==src) img.setAttribute('src',src); }
     if(q('realExamPrevV79')) q('realExamPrevV79').disabled=active.index<=0;
     if(q('realExamNextV79')) q('realExamNextV79').disabled=active.index>=EXAM_COUNT-1;
     updateAnswerUi();
     renderTimers();
-    prepareInkForImage();
+    prepareInkForImage(resetZoom);
     const sc=q('realExamImageScrollerV79'); if(sc){sc.scrollTop=0;sc.scrollLeft=0;}
   }
   function startExam(){
@@ -8897,7 +8990,7 @@ window.psatOrderedReverseV77 = true;
     };
     saveActive();
     setPanels('active');
-    renderQuestion();
+    zoom=1; renderQuestion(true);
     startTimer();
     updateResume();
   }
@@ -8910,11 +9003,10 @@ window.psatOrderedReverseV77 = true;
   }
   function goToIndex(index){
     if(!active)return;
+    const current=Number(active.index)||0;
     const next=Math.max(0,Math.min(EXAM_COUNT-1,Number(index)||0));
-    active.index=next;
-    drawing=false; drawPointerId=null; currentStroke=null;
-    saveActive();
-    renderQuestion();
+    if(next===current){ renderQuestion(false); return; }
+    active.index=next; resetPointerState(); zoom=1; saveActive(); renderQuestion(true);
   }
   function move(delta){
     if(!active)return;
@@ -8991,7 +9083,7 @@ window.psatOrderedReverseV77 = true;
   function showActive(){
     if(!active)return;
     if(Date.now()>=Number(active.endAt||0)){ finalizeExam(true); return; }
-    setPanels('active'); renderQuestion(); startTimer(); updateResume();
+    setPanels('active'); zoom=1; renderQuestion(true); startTimer(); updateResume();
   }
   function showNewSetup(){
     stopTimer(); setPanels('setup'); populateSetup(true); updateResume();
@@ -9079,6 +9171,16 @@ window.psatOrderedReverseV77 = true;
     populateReviewSelect(lastResultId);
   }
 
+  function handleExamNavClickV81(event){
+    const next=event.target?.closest?.('#realExamNextV79');
+    const prev=event.target?.closest?.('#realExamPrevV79');
+    const nav=event.target?.closest?.('#realExamNavV79 button[data-exam-index-v81]');
+    if(!next&&!prev&&!nav)return;
+    if((next||prev)?.disabled)return;
+    event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation();
+    if(next)move(1); else if(prev)move(-1); else goToIndex(Number(nav.dataset.examIndexV81));
+  }
+
   function bind(){
     const subject=q('realExamSubjectV79'); if(subject) subject.onchange=()=>{
       const s=subject.value||''; fillSelect(q('realExamYearV79'),yearsFor(s),'연도/회차 선택',''); updateCount();
@@ -9089,8 +9191,8 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamChoicesV79')) q('realExamChoicesV79').onclick=(e)=>{
       const b=e.target.closest('[data-exam-answer]'); if(b) answerExam(b.dataset.examAnswer);
     };
-    if(q('realExamPrevV79')) q('realExamPrevV79').onclick=()=>move(-1);
-    if(q('realExamNextV79')) q('realExamNextV79').onclick=()=>move(1);
+    if(q('realExamPrevV79')) q('realExamPrevV79').onclick=null;
+    if(q('realExamNextV79')) q('realExamNextV79').onclick=null;
     if(q('realExamSubmitV79')) q('realExamSubmitV79').onclick=submitExam;
     if(q('realExamAbortV79')) q('realExamAbortV79').onclick=abortExam;
     if(q('realExamGoReviewV79')) q('realExamGoReviewV79').onclick=openLatestReview;
@@ -9108,13 +9210,18 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamEraserSizeV80')) q('realExamEraserSizeV80').oninput=updateSizeLabels;
     const canvas=q('realExamInkCanvasV80');
     if(canvas){
-      canvas.onpointerdown=beginDraw;
-      canvas.onpointermove=moveDraw;
-      canvas.onpointerup=endDraw;
-      canvas.onpointercancel=endDraw;
-      canvas.onlostpointercapture=endDraw;
+      canvas.onpointerdown=canvasDown;
+      canvas.onpointermove=canvasMove;
+      canvas.onpointerup=canvasEnd;
+      canvas.onpointercancel=canvasEnd;
+      canvas.onlostpointercapture=canvasEnd;
+      if('onpointerrawupdate' in canvas) canvas.onpointerrawupdate=canvasMove;
     }
-    updateSizeLabels(); setDrawTool('pen');
+    if(q('realExamZoomOutV81')) q('realExamZoomOutV81').onclick=()=>zoomFromCenter(zoom<=0.35?-0.05:-0.20);
+    if(q('realExamZoomInV81')) q('realExamZoomInV81').onclick=()=>zoomFromCenter(zoom<0.35?0.05:0.20);
+    if(q('realExamFitZoomV81')) q('realExamFitZoomV81').onclick=fitZoom;
+    window.addEventListener('resize',()=>{ if(q('realExamPanelV79')&&!q('realExamPanelV79').classList.contains('hidden')) requestAnimationFrame(()=>{syncCanvasSize();scheduleInkRedraw();}); });
+    updateSizeLabels(); setDrawTool('pen'); setZoom(1);
   }
 
   const baseSwitch=switchView;
@@ -9139,6 +9246,7 @@ window.psatOrderedReverseV77 = true;
     return out;
   };
 
+  document.addEventListener('click',handleExamNavClickV81,true);
   bind();
   restoreActive();
   setPanels('setup');
@@ -9147,5 +9255,5 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamViewV79')?.classList.contains('active') && active) showActive();
   },700);
 
-  window.psatRealExamV80={startExam,finalizeExam,results,active:()=>active,goToIndex};
+  window.psatRealExamV81={startExam,finalizeExam,results,active:()=>active,goToIndex,setExamZoom:setZoom,fitExamZoom:fitZoom};
 })();

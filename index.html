@@ -7,7 +7,7 @@
   <title>PSAT 랜덤 오답노트</title>
   <link rel="manifest" href="manifest.webmanifest?v=80" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=80" />
+  <link rel="stylesheet" href="styles.css?v=81" />
 </head>
 <body>
   <header class="app-header">
@@ -394,11 +394,15 @@
             <span id="realExamEraserSizeLabelV80" class="badge small-badge">26</span>
           </label>
           <button id="realExamClearInkV80" class="danger-lite" type="button">필기 전체지우기</button>
-          <span class="tool-help">손가락: 이동 · S펜/마우스: 필기</span>
+          <button id="realExamZoomOutV81" class="secondary" type="button">−</button>
+          <span id="realExamZoomLabelV81" class="badge">100%</span>
+          <button id="realExamZoomInV81" class="secondary" type="button">＋</button>
+          <button id="realExamFitZoomV81" class="secondary" type="button">맞춤</button>
+          <span class="tool-help">손가락: 이동/확대 · S펜/마우스: 필기</span>
         </div>
 
-        <div id="realExamImageScrollerV79" class="real-exam-image-scroller-v79">
-          <div id="realExamImageStageV80" class="real-exam-image-stage-v80">
+        <div id="realExamImageScrollerV79" class="image-scroller real-exam-image-scroller-v79">
+          <div id="realExamImageStageV80" class="image-wrap real-exam-image-stage-v80">
             <img id="realExamImageV79" alt="실전 문제 이미지" />
             <canvas id="realExamInkCanvasV80" aria-label="실전 필기 캔버스"></canvas>
           </div>
@@ -512,7 +516,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
-  <script src="app.js?v=80"></script>
+  <script src="app.js?v=81"></script>
 
   <div id="exitSummaryOverlayV49" class="exit-summary-overlay-v49 hidden" role="dialog" aria-modal="true" aria-labelledby="exitSummaryTitleV49">
     <div class="exit-summary-card-v49">
