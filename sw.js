@@ -1,12 +1,12 @@
 'use strict';
 
-const CACHE_NAME = 'psat-random-note-v82';
+const CACHE_NAME = 'psat-random-note-v83';
 const ASSETS = [
-  './?v=82',
+  './?v=83',
   './index.html',
-  './styles.css?v=82',
-  './app.js?v=82',
-  './manifest.webmanifest?v=82',
+  './styles.css?v=83',
+  './app.js?v=83',
+  './manifest.webmanifest?v=83',
   './icon-192.png',
   './icon-512.png'
 ];
@@ -40,7 +40,7 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(async () => (
           (await caches.match('./index.html')) ||
-          (await caches.match('./?v=82'))
+          (await caches.match('./?v=83'))
         ))
     );
     return;

@@ -3803,7 +3803,7 @@ function bindEvents() {
 async function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=82', { updateViaCache: 'none' });
+      const reg = await navigator.serviceWorker.register('./sw.js?v=83', { updateViaCache: 'none' });
       await reg.update();
     } catch (err) {
       console.warn('Service worker registration failed', err);
@@ -8590,14 +8590,14 @@ window.psatOrderedSolveV76 = true;
 window.psatOrderedReverseV77 = true;
 
 
-/* === v82: 실전풀기 이동 멈춤 원인 제거 + 필기 저장 분리 ===
+/* === v83: 실전 제출 무반응 수정 + p82 이동/필기 저장 분리 유지 ===
    - v79 실전 기능 유지
    - 진행 중 실전 복구 시 시작화면/active 상태 충돌 수정
    - 다음/이전/번호 이동을 단일 goToIndex 경로로 고정
    - 실전 전용 펜/지우개/전체지우기, 문제별 필기 보존
    - 실전 필기는 일반 문제 annotations와 완전 분리
 */
-(function psatRealExamV82(){
+(function psatRealExamV83(){
   const q=(id)=>document.getElementById(id);
   const EXAM_COUNT=40;
   const EXAM_MS=80*60*1000;
@@ -9029,7 +9029,14 @@ window.psatOrderedReverseV77 = true;
     });
     const answered=answeredCount();
     if(q('realExamAnsweredV79')) q('realExamAnsweredV79').textContent=`답안 ${answered}/${EXAM_COUNT}`;
-    if(q('realExamSubmitV79')) q('realExamSubmitV79').disabled=answered!==EXAM_COUNT;
+    const submit=q('realExamSubmitV79');
+    if(submit){
+      // v83: disabled 버튼은 클릭 이벤트 자체가 발생하지 않아 '무반응'처럼 보였다.
+      // 항상 클릭 가능하게 두고, 미응답 여부는 submitExam에서 명확히 안내한다.
+      submit.disabled=false;
+      submit.textContent=answered===EXAM_COUNT ? '시험지 제출' : `시험지 제출 (${answered}/${EXAM_COUNT})`;
+      submit.title=answered===EXAM_COUNT ? '지금 제출하고 채점' : `미응답 ${EXAM_COUNT-answered}문제`;
+    }
     renderNav();
   }
   function renderQuestion(resetZoom=false){
@@ -9129,21 +9136,42 @@ window.psatOrderedReverseV77 = true;
     if(!active)return;
     stopTimer();
     const result=resultForActive(timedOut);
-    const rows=results().filter(r=>r.id!==result.id);
-    rows.unshift(result); saveResults(rows);
-    lastResultId=result.id;
     const finishedExamId=active.id;
-    active=null; saveActive();
-    removeExamInkDb(finishedExamId);
-    renderResult(result); setPanels('result');
-    populateReviewSelect(result.id);
+    lastResultId=result.id;
+
+    // v83: 결과 저장보다 화면 전환을 먼저 한다.
+    // localStorage 저장 오류가 나도 사용자는 채점 결과를 반드시 볼 수 있다.
+    active=null;
+    saveActive();
+    renderResult(result);
+    setPanels('result');
     updateResume();
-    showToast(timedOut?'80분이 지나 자동 제출·채점했어':'시험지 제출·채점 완료');
+
+    let resultSaved=true;
+    try{
+      const rows=results().filter(r=>r.id!==result.id);
+      rows.unshift(result);
+      saveResults(rows);
+    }catch(err){
+      resultSaved=false;
+      console.warn('real exam result save failed',err);
+    }
+    removeExamInkDb(finishedExamId).catch((err)=>console.warn('exam ink cleanup failed',err));
+    if(resultSaved){
+      try{ populateReviewSelect(result.id); }catch(err){ console.warn('real exam review refresh failed',err); }
+    }
+    showToast(resultSaved
+      ? (timedOut?'80분이 지나 자동 제출·채점했어':'시험지 제출·채점 완료')
+      : '채점은 완료됐지만 실전리뷰 저장에 실패했어');
   }
   function submitExam(){
-    if(!active)return;
-    if(answeredCount()!==EXAM_COUNT){ showToast('40문제 답안을 모두 체크한 뒤 제출할 수 있어'); return; }
-    if(!confirm('시험지를 제출할까? 제출 후에는 답안을 수정할 수 없어.'))return;
+    if(!active){ showToast('진행 중인 실전이 없어'); return; }
+    const answered=answeredCount();
+    if(answered!==EXAM_COUNT){
+      showToast(`현재 ${answered}/${EXAM_COUNT} 답변 · 미응답 ${EXAM_COUNT-answered}문제`);
+      return;
+    }
+    // v83: 모바일/PWA에서 confirm 창 때문에 제출이 막히는 경로를 없애고 즉시 제출한다.
     finalizeExam(false);
   }
   function abortExam(){
@@ -9268,6 +9296,15 @@ window.psatOrderedReverseV77 = true;
     populateReviewSelect(lastResultId);
   }
 
+  function handleExamSubmitV83(event){
+    const btn=event.target?.closest?.('#realExamSubmitV79');
+    if(!btn)return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    submitExam();
+  }
+
   function bind(){
     const subject=q('realExamSubjectV79'); if(subject) subject.onchange=()=>{
       const s=subject.value||''; fillSelect(q('realExamYearV79'),yearsFor(s),'연도/회차 선택',''); updateCount();
@@ -9280,7 +9317,7 @@ window.psatOrderedReverseV77 = true;
     };
     if(q('realExamPrevV79')) q('realExamPrevV79').onclick=(e)=>{e.preventDefault();move(-1);};
     if(q('realExamNextV79')) q('realExamNextV79').onclick=(e)=>{e.preventDefault();move(1);};
-    if(q('realExamSubmitV79')) q('realExamSubmitV79').onclick=submitExam;
+    if(q('realExamSubmitV79')) q('realExamSubmitV79').onclick=null;
     if(q('realExamAbortV79')) q('realExamAbortV79').onclick=abortExam;
     if(q('realExamGoReviewV79')) q('realExamGoReviewV79').onclick=openLatestReview;
     if(q('realExamNewV79')) q('realExamNewV79').onclick=showNewSetup;
@@ -9333,6 +9370,7 @@ window.psatOrderedReverseV77 = true;
     return out;
   };
 
+  document.addEventListener('click',handleExamSubmitV83,true);
   bind();
   restoreActive();
   setPanels('setup');
@@ -9341,5 +9379,5 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamViewV79')?.classList.contains('active') && active) showActive();
   },700);
 
-  window.psatRealExamV82={startExam,finalizeExam,results,active:()=>active,goToIndex,setExamZoom:setZoom,fitExamZoom:fitZoom};
+  window.psatRealExamV83={startExam,finalizeExam,results,active:()=>active,goToIndex,setExamZoom:setZoom,fitExamZoom:fitZoom};
 })();
