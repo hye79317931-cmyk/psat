@@ -3803,7 +3803,7 @@ function bindEvents() {
 async function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=85', { updateViaCache: 'none' });
+      const reg = await navigator.serviceWorker.register('./sw.js?v=86', { updateViaCache: 'none' });
       await reg.update();
     } catch (err) {
       console.warn('Service worker registration failed', err);
@@ -8590,17 +8590,17 @@ window.psatOrderedSolveV76 = true;
 window.psatOrderedReverseV77 = true;
 
 
-/* === v85: 실전 화면 크기 고정 + 리뷰 삭제 수정 + p84 리뷰 이동 유지 ===
+/* === v86: 실전 90분 + 좌측 툴바 + 답안 축소 + 실전리뷰 필기 ===
    - v79 실전 기능 유지
    - 진행 중 실전 복구 시 시작화면/active 상태 충돌 수정
    - 다음/이전/번호 이동을 단일 goToIndex 경로로 고정
    - 실전 전용 펜/지우개/전체지우기, 문제별 필기 보존
    - 실전 필기는 일반 문제 annotations와 완전 분리
 */
-(function psatRealExamV84(){
+(function psatRealExamV86(){
   const q=(id)=>document.getElementById(id);
   const EXAM_COUNT=40;
-  const EXAM_MS=80*60*1000;
+  const EXAM_MS=90*60*1000;
   const SCORE_PER=2.5;
   const ACTIVE_KEY='psat-real-exam-active-v79'; // v79 진행 중 기록 호환
   const RESULTS_KEY='psat-real-exam-results-v79'; // 기존 실전리뷰 호환
@@ -8631,11 +8631,47 @@ window.psatOrderedReverseV77 = true;
   function saveResults(rows){
     localStorage.setItem(RESULTS_KEY, JSON.stringify(rows.slice(0,50)));
   }
+  // v86: 실전리뷰 필기는 실전 진행 필기와 같은 IndexedDB 안에 별도 key로 저장한다.
+  // 리뷰를 나갔다 들어와도 남고, 리뷰 기록 삭제 시 함께 지운다.
+  const reviewInkCacheV86=new Map();
+  function reviewInkExamIdV86(resultId){return `review:${String(resultId||'')}`;}
+  function reviewInkKeyV86(resultId,problemId){return `review::${String(resultId||'')}::${String(problemId||'')}`;}
+  async function readReviewInkV86(resultId,problemId){
+    const key=reviewInkKeyV86(resultId,problemId);
+    if(reviewInkCacheV86.has(key))return reviewInkCacheV86.get(key);
+    try{
+      const db=await openExamInkDb();
+      const strokes=await new Promise((resolve,reject)=>{
+        const tx=db.transaction(EXAM_INK_STORE,'readonly');
+        const req=tx.objectStore(EXAM_INK_STORE).get(key);
+        req.onsuccess=()=>resolve(Array.isArray(req.result?.strokes)?req.result.strokes:[]);
+        req.onerror=()=>reject(req.error);
+      });
+      reviewInkCacheV86.set(key,strokes);
+      return strokes;
+    }catch(err){console.warn('review ink load failed',err);return [];}
+  }
+  async function writeReviewInkV86(resultId,problemId,strokes){
+    const key=reviewInkKeyV86(resultId,problemId);
+    reviewInkCacheV86.set(key,strokes);
+    try{
+      const db=await openExamInkDb();
+      await new Promise((resolve,reject)=>{
+        const tx=db.transaction(EXAM_INK_STORE,'readwrite');
+        tx.oncomplete=()=>resolve(); tx.onerror=()=>reject(tx.error);
+        tx.objectStore(EXAM_INK_STORE).put({key,examId:reviewInkExamIdV86(resultId),problemId,strokes});
+      });
+    }catch(err){console.warn('review ink save failed',err);}
+  }
   function normalizeActive(row){
     if(!row || !Array.isArray(row.problemIds) || row.problemIds.length!==EXAM_COUNT) return null;
     row.answers = row.answers && typeof row.answers==='object' ? row.answers : {};
     row.ink = row.ink && typeof row.ink==='object' ? row.ink : {};
     row.index = Math.max(0,Math.min(EXAM_COUNT-1,Number(row.index)||0));
+    // v86: p85 이하에서 시작된 80분 실전도 이어풀기 시 90분 기준으로 맞춘다.
+    const startedAt=Number(row.startedAt||0), endAt=Number(row.endAt||0);
+    const oldDuration=endAt-startedAt;
+    if(startedAt>0 && oldDuration>0 && oldDuration<=80*60*1000+5000) row.endAt=startedAt+EXAM_MS;
     return row;
   }
 
@@ -9172,7 +9208,7 @@ window.psatOrderedReverseV77 = true;
       try{ populateReviewSelect(result.id); }catch(err){ console.warn('real exam review refresh failed',err); }
     }
     showToast(resultSaved
-      ? (timedOut?'80분이 지나 자동 제출·채점했어':'시험지 제출·채점 완료')
+      ? (timedOut?'90분이 지나 자동 제출·채점했어':'시험지 제출·채점 완료')
       : '채점은 완료됐지만 실전리뷰 저장에 실패했어');
   }
   function submitExam(){
@@ -9257,11 +9293,70 @@ window.psatOrderedReverseV77 = true;
   function makeReviewCard(r,id){
     const p=problemById(id);
     const index=r.problemIds.findIndex(x=>String(x)===String(id));
-    const card=document.createElement('article'); card.className='real-exam-review-card-v79';
+    const card=document.createElement('article'); card.className='real-exam-review-card-v79 real-exam-review-ink-card-v86';
     const title=document.createElement('h3'); title.textContent=`${index+1}번`; card.appendChild(title);
     const meta=document.createElement('p'); meta.className='meta'; meta.textContent=`${r.subject} · ${r.year}`; card.appendChild(meta);
     if(!p){ const m=document.createElement('p');m.className='hint';m.textContent='현재 문제은행에서 이 문제를 찾을 수 없어.';card.appendChild(m);return card; }
-    const img=document.createElement('img'); img.loading='lazy'; img.src=p.imageData||''; img.alt=`${index+1}번 문제`; card.appendChild(img);
+
+    let reviewTool='pen', reviewDrawing=false, reviewPointer=null, reviewStroke=null, reviewStrokes=[];
+    const toolbar=document.createElement('div'); toolbar.className='real-exam-review-ink-toolbar-v86';
+    const pen=document.createElement('button'); pen.type='button';pen.className='secondary active-tool';pen.textContent='펜';
+    const eraser=document.createElement('button'); eraser.type='button';eraser.className='secondary';eraser.textContent='지우개';
+    const clear=document.createElement('button'); clear.type='button';clear.className='danger-lite';clear.textContent='필기 지우기';
+    const hint=document.createElement('span'); hint.className='tool-help';hint.textContent='손가락 스크롤 · S펜 필기';
+    toolbar.append(pen,eraser,clear,hint);card.appendChild(toolbar);
+
+    const wrap=document.createElement('div');wrap.className='real-exam-review-image-wrap-v86';
+    const img=document.createElement('img'); img.loading='lazy'; img.src=p.imageData||''; img.alt=`${index+1}번 문제`;
+    const canvas=document.createElement('canvas');canvas.className='real-exam-review-ink-canvas-v86';canvas.setAttribute('aria-label',`${index+1}번 리뷰 필기 캔버스`);
+    wrap.append(img,canvas);card.appendChild(wrap);
+
+    const sync=()=>{
+      const w=Math.max(1,Math.round(img.clientWidth||img.getBoundingClientRect().width||0));
+      const h=Math.max(1,Math.round(img.clientHeight||img.getBoundingClientRect().height||0));
+      if(w<=1||h<=1)return false;
+      const dpr=Math.max(1,Number(window.devicePixelRatio)||1),bw=Math.round(w*dpr),bh=Math.round(h*dpr);
+      if(canvas.width!==bw||canvas.height!==bh){canvas.width=bw;canvas.height=bh;}
+      canvas.style.width=`${w}px`;canvas.style.height=`${h}px`;wrap.style.width=`${w}px`;wrap.style.height=`${h}px`;return true;
+    };
+    const redraw=()=>{
+      if(!sync())return;
+      const ctx=canvas.getContext('2d');if(!ctx)return;
+      const dpr=Math.max(1,Number(window.devicePixelRatio)||1);
+      ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,canvas.width,canvas.height);ctx.setTransform(dpr,0,0,dpr,0,0);
+      for(const stroke of reviewStrokes)drawStoredStroke(ctx,canvas.clientWidth||1,canvas.clientHeight||1,stroke);
+    };
+    const point=(e)=>{const rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return null;return[clamp((e.clientX-rect.left)/rect.width,0,1),clamp((e.clientY-rect.top)/rect.height,0,1)];};
+    const startReviewInk=(e)=>{
+      if(e.pointerType==='touch')return;
+      if(e.pointerType==='mouse'&&e.button!==0&&e.buttons!==1)return;
+      const pt=point(e);if(!pt)return;e.preventDefault();e.stopPropagation();
+      try{canvas.setPointerCapture?.(e.pointerId);}catch{}
+      reviewDrawing=true;reviewPointer=e.pointerId;
+      const px=reviewTool==='eraser'?22:4;
+      reviewStroke={t:reviewTool,w:Math.max(.0008,px/Math.max(1,canvas.clientWidth||1)),p:[pt]};
+      reviewStrokes.push(reviewStroke);redraw();
+    };
+    const moveReviewInk=(e)=>{
+      if(!reviewDrawing||e.pointerId!==reviewPointer||!reviewStroke||e.pointerType==='touch')return;
+      e.preventDefault();e.stopPropagation();
+      const packets=typeof e.getCoalescedEvents==='function'?e.getCoalescedEvents():[e];
+      for(const ev of packets){const pt=point(ev);if(!pt)continue;const last=reviewStroke.p[reviewStroke.p.length-1];if(!last||Math.hypot(pt[0]-last[0],pt[1]-last[1])>=.00035)reviewStroke.p.push(pt);}redraw();
+    };
+    const endReviewInk=(e)=>{
+      if(!reviewDrawing||(reviewPointer!==null&&e.pointerId!==reviewPointer))return;
+      if(e.pointerType!=='touch'){e.preventDefault();e.stopPropagation();}
+      reviewDrawing=false;reviewPointer=null;reviewStroke=null;writeReviewInkV86(r.id,id,reviewStrokes);
+    };
+    pen.onclick=()=>{reviewTool='pen';pen.classList.add('active-tool');eraser.classList.remove('active-tool');};
+    eraser.onclick=()=>{reviewTool='eraser';eraser.classList.add('active-tool');pen.classList.remove('active-tool');};
+    clear.onclick=()=>{if(!confirm('이 리뷰 문제의 필기를 지울까?'))return;reviewStrokes=[];writeReviewInkV86(r.id,id,reviewStrokes);redraw();};
+    canvas.onpointerdown=startReviewInk;canvas.onpointermove=moveReviewInk;canvas.onpointerup=endReviewInk;canvas.onpointercancel=endReviewInk;canvas.onlostpointercapture=endReviewInk;
+    if('onpointerrawupdate' in canvas)canvas.onpointerrawupdate=moveReviewInk;
+    img.addEventListener('load',redraw);
+    readReviewInkV86(r.id,id).then((strokes)=>{reviewStrokes=Array.isArray(strokes)?strokes:[];requestAnimationFrame(redraw);});
+    if(typeof ResizeObserver!=='undefined'){const ro=new ResizeObserver(()=>requestAnimationFrame(redraw));ro.observe(img);}
+
     const ans=document.createElement('div'); ans.className='real-exam-review-answer-v79';
     const mine=Number(r.answers?.[id]||0);
     ans.innerHTML=`<span>내 답: ${mine?choiceLabel(mine):'미응답'}</span><span>정답: ${choiceLabel(p.answer)}</span>`;
@@ -9299,6 +9394,8 @@ window.psatOrderedReverseV77 = true;
       saveResults(base.filter((x)=>String(x?.id||'')!==deleteId));
       if(latestResult && String(latestResult.id||'')===deleteId) latestResult=null;
       if(String(lastResultId||'')===deleteId) lastResultId='';
+      for(const key of [...reviewInkCacheV86.keys()]) if(key.startsWith(`review::${deleteId}::`)) reviewInkCacheV86.delete(key);
+      removeExamInkDb(reviewInkExamIdV86(deleteId)).catch((err)=>console.warn('review ink cleanup failed',err));
       populateReviewSelect();
       renderReview();
       showToast('실전 리뷰 기록을 삭제했어');

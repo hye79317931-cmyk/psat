@@ -2400,3 +2400,109 @@ body > #exitSummaryOverlayV49 {
 }
 .real-exam-image-scroller-v79.panning { cursor: grabbing; }
 #realExamZoomLabelV81 { min-width: 58px; }
+
+
+/* === v86: 실전 90분 / 좌측 필기툴 / 답안 축소 / 실전리뷰 필기 === */
+.real-exam-workspace-v86 {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px;
+  align-items: stretch;
+  margin-bottom: 8px;
+}
+.real-exam-side-toolbar-v86 {
+  margin: 0;
+  padding: 7px 5px;
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(9, 16, 29, .98);
+}
+.real-exam-side-toolbar-v86 button,
+.real-exam-side-toolbar-v86 .badge {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 3px;
+  font-size: 11px;
+}
+.real-exam-side-toolbar-v86 .range-control {
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 3px;
+  padding: 5px 4px;
+  border-radius: 10px;
+  font-size: 9px;
+  line-height: 1.1;
+  background: rgba(255,255,255,.055);
+  border: 1px solid rgba(255,255,255,.10);
+}
+.real-exam-side-toolbar-v86 .range-control input[type=range] { width: 100%; min-height: 22px; }
+.real-exam-side-toolbar-v86 .small-badge { min-height: 22px; font-size: 10px; }
+.real-exam-side-toolbar-v86 .tool-help { display: block; padding: 3px 1px; font-size: 9px; line-height: 1.25; text-align: center; }
+.real-exam-workspace-v86 .real-exam-image-scroller-v79 { margin-bottom: 0; max-height: min(70vh, 900px); }
+.real-exam-choices-v79 {
+  width: min(100%, 430px);
+  margin: 7px auto 4px;
+  gap: 5px;
+}
+.real-exam-choices-v79 .choice {
+  min-height: 36px;
+  padding: 4px 2px;
+  font-size: 17px;
+  border-radius: 9px;
+}
+.real-exam-review-ink-toolbar-v86 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 7px 0;
+}
+.real-exam-review-ink-toolbar-v86 button { min-height: 34px; padding: 6px 10px; font-size: 12px; }
+.real-exam-review-ink-toolbar-v86 .active-tool { outline: 2px solid var(--accent); outline-offset: 1px; }
+.real-exam-review-image-wrap-v86 {
+  position: relative;
+  max-width: 100%;
+  margin: 8px auto;
+  background: #fff;
+}
+.real-exam-review-image-wrap-v86 > img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  margin: 0;
+  border-radius: 10px;
+  background: #fff;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.real-exam-review-ink-canvas-v86 {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  cursor: crosshair;
+  touch-action: pan-y;
+}
+@media (max-width: 520px) {
+  .real-exam-workspace-v86 { grid-template-columns: 76px minmax(0, 1fr); gap: 5px; }
+  .real-exam-side-toolbar-v86 { padding: 5px 3px; gap: 4px; }
+  .real-exam-side-toolbar-v86 button,
+  .real-exam-side-toolbar-v86 .badge { min-height: 31px; font-size: 10px; padding: 5px 2px; }
+  .real-exam-side-toolbar-v86 .range-control { font-size: 8px; padding: 4px 3px; }
+  .real-exam-side-toolbar-v86 .tool-help { display: none; }
+  .real-exam-choices-v79 { width: min(100%, 330px); gap: 4px; }
+  .real-exam-choices-v79 .choice { min-height: 32px; font-size: 15px; }
+  .real-exam-review-ink-toolbar-v86 .tool-help { display: none; }
+}
