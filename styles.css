@@ -2506,3 +2506,50 @@ body > #exitSummaryOverlayV49 {
   .real-exam-choices-v79 .choice { min-height: 32px; font-size: 15px; }
   .real-exam-review-ink-toolbar-v86 .tool-help { display: none; }
 }
+
+/* === v87: 실전리뷰 지연 로딩 + 필기 반응 개선 === */
+.real-exam-review-ink-card-v86 { contain: layout style; }
+.real-exam-review-ink-canvas-v86 {
+  pointer-events: auto;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+}
+.real-exam-review-more-v87 {
+  display: block;
+  width: min(100%, 420px);
+  margin: 12px auto 18px;
+}
+
+/* === v87: 실전리뷰 확대/축소/손가락 이동 === */
+.real-exam-review-scroller-v87 {
+  width: 100%;
+  max-height: min(72vh, 900px);
+  overflow: auto;
+  margin: 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #e5e7eb;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: none;
+}
+.real-exam-review-stage-v87 {
+  max-width: none;
+  min-width: 0;
+  margin: 0;
+  display: block;
+  vertical-align: top;
+}
+.real-exam-review-stage-v87 > img {
+  width: 100%;
+  max-width: none;
+  height: auto;
+  margin: 0;
+}
+.real-exam-review-stage-v87 > .real-exam-review-ink-canvas-v86 {
+  touch-action: none;
+}
+.real-exam-review-zoom-label-v87 {
+  min-width: 58px;
+  text-align: center;
+}

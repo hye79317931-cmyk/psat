@@ -3803,7 +3803,7 @@ function bindEvents() {
 async function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=86', { updateViaCache: 'none' });
+      const reg = await navigator.serviceWorker.register('./sw.js?v=87', { updateViaCache: 'none' });
       await reg.update();
     } catch (err) {
       console.warn('Service worker registration failed', err);
@@ -9290,97 +9290,292 @@ window.psatOrderedReverseV77 = true;
       <div><span>미응답</span><strong>${r.unansweredIds.length}</strong></div>
       <div><span>소요시간</span><strong>${formatExamTime(r.elapsedMs)}</strong></div>`;
   }
-  function makeReviewCard(r,id){
-    const p=problemById(id);
+  let reviewRenderTokenV87=0;
+
+  async function reviewProblemByIdV87(id){
+    let p=problemById(id);
+    if(p)return p;
+    // v87: 메모리 인덱스가 아직 갱신되기 전이어도 IndexedDB에서 직접 한 번 더 찾는다.
+    try{
+      const db=await openDb();
+      const keys=[id,String(id)];
+      const numeric=Number(id);
+      if(Number.isFinite(numeric))keys.push(numeric);
+      const seen=new Set();
+      for(const key of keys){
+        const sig=typeof key+':'+String(key);if(seen.has(sig))continue;seen.add(sig);
+        const row=await new Promise((resolve,reject)=>{
+          const tx=db.transaction(STORES.problems,'readonly');
+          const req=tx.objectStore(STORES.problems).get(key);
+          req.onsuccess=()=>resolve(req.result||null);
+          req.onerror=()=>reject(req.error);
+        });
+        if(row){
+          try{
+            if(typeof upsertStateProblemV63==='function')upsertStateProblemV63(row,false);
+            else{
+              const i=state.problems.findIndex(x=>String(x.id)===String(row.id));
+              if(i>=0)state.problems[i]=row;else state.problems.push(row);
+              if(typeof rebuildProblemIndexV63==='function')rebuildProblemIndexV63();
+            }
+          }catch{}
+          return row;
+        }
+      }
+    }catch(err){console.warn('v87 review direct problem lookup failed',err);}
+    return null;
+  }
+
+  function reviewPenLikeV87(e){
+    if(!e||e.pointerType==='touch')return false;
+    if(e.pointerType==='pen')return true;
+    return e.pointerType==='mouse'||e.pointerType===''||!e.pointerType;
+  }
+
+  function makeReviewCard(r,id,renderToken=reviewRenderTokenV87){
     const index=r.problemIds.findIndex(x=>String(x)===String(id));
-    const card=document.createElement('article'); card.className='real-exam-review-card-v79 real-exam-review-ink-card-v86';
-    const title=document.createElement('h3'); title.textContent=`${index+1}번`; card.appendChild(title);
-    const meta=document.createElement('p'); meta.className='meta'; meta.textContent=`${r.subject} · ${r.year}`; card.appendChild(meta);
-    if(!p){ const m=document.createElement('p');m.className='hint';m.textContent='현재 문제은행에서 이 문제를 찾을 수 없어.';card.appendChild(m);return card; }
+    const card=document.createElement('article');
+    card.className='real-exam-review-card-v79 real-exam-review-ink-card-v86';
+    const title=document.createElement('h3');title.textContent=`${index+1}번`;card.appendChild(title);
+    const meta=document.createElement('p');meta.className='meta';meta.textContent=`${r.subject} · ${r.year}`;card.appendChild(meta);
+    const loading=document.createElement('p');loading.className='hint';loading.textContent='문제 불러오는 중...';card.appendChild(loading);
 
-    let reviewTool='pen', reviewDrawing=false, reviewPointer=null, reviewStroke=null, reviewStrokes=[];
-    const toolbar=document.createElement('div'); toolbar.className='real-exam-review-ink-toolbar-v86';
-    const pen=document.createElement('button'); pen.type='button';pen.className='secondary active-tool';pen.textContent='펜';
-    const eraser=document.createElement('button'); eraser.type='button';eraser.className='secondary';eraser.textContent='지우개';
-    const clear=document.createElement('button'); clear.type='button';clear.className='danger-lite';clear.textContent='필기 지우기';
-    const hint=document.createElement('span'); hint.className='tool-help';hint.textContent='손가락 스크롤 · S펜 필기';
-    toolbar.append(pen,eraser,clear,hint);card.appendChild(toolbar);
+    (async()=>{
+      const p=await reviewProblemByIdV87(id);
+      if(renderToken!==reviewRenderTokenV87||!card.isConnected)return;
+      loading.remove();
+      if(!p){
+        const m=document.createElement('p');m.className='hint';
+        m.textContent='문제 데이터를 다시 불러오지 못했어. 목록에서 문제 데이터가 있는지 확인해줘.';
+        card.appendChild(m);return;
+      }
 
-    const wrap=document.createElement('div');wrap.className='real-exam-review-image-wrap-v86';
-    const img=document.createElement('img'); img.loading='lazy'; img.src=p.imageData||''; img.alt=`${index+1}번 문제`;
-    const canvas=document.createElement('canvas');canvas.className='real-exam-review-ink-canvas-v86';canvas.setAttribute('aria-label',`${index+1}번 리뷰 필기 캔버스`);
-    wrap.append(img,canvas);card.appendChild(wrap);
+      let reviewTool='pen',reviewDrawing=false,reviewPointer=null,reviewStroke=null,reviewStrokes=[];
+      let reviewRaf=0;
+      let reviewZoom=1;
+      const reviewTouches=new Map();
+      let reviewGesture=null;
+      const toolbar=document.createElement('div');toolbar.className='real-exam-review-ink-toolbar-v86';
+      const pen=document.createElement('button');pen.type='button';pen.className='secondary active-tool';pen.textContent='펜';
+      const eraser=document.createElement('button');eraser.type='button';eraser.className='secondary';eraser.textContent='지우개';
+      const clear=document.createElement('button');clear.type='button';clear.className='danger-lite';clear.textContent='필기 지우기';
+      const zoomOut=document.createElement('button');zoomOut.type='button';zoomOut.className='secondary';zoomOut.textContent='−';zoomOut.setAttribute('aria-label','리뷰 축소');
+      const zoomLabel=document.createElement('span');zoomLabel.className='badge real-exam-review-zoom-label-v87';zoomLabel.textContent='100%';
+      const zoomIn=document.createElement('button');zoomIn.type='button';zoomIn.className='secondary';zoomIn.textContent='＋';zoomIn.setAttribute('aria-label','리뷰 확대');
+      const fit=document.createElement('button');fit.type='button';fit.className='secondary';fit.textContent='맞춤';
+      const hint=document.createElement('span');hint.className='tool-help';hint.textContent='손가락 이동/확대 · S펜 필기';
+      toolbar.append(pen,eraser,clear,zoomOut,zoomLabel,zoomIn,fit,hint);card.appendChild(toolbar);
 
-    const sync=()=>{
-      const w=Math.max(1,Math.round(img.clientWidth||img.getBoundingClientRect().width||0));
-      const h=Math.max(1,Math.round(img.clientHeight||img.getBoundingClientRect().height||0));
-      if(w<=1||h<=1)return false;
-      const dpr=Math.max(1,Number(window.devicePixelRatio)||1),bw=Math.round(w*dpr),bh=Math.round(h*dpr);
-      if(canvas.width!==bw||canvas.height!==bh){canvas.width=bw;canvas.height=bh;}
-      canvas.style.width=`${w}px`;canvas.style.height=`${h}px`;wrap.style.width=`${w}px`;wrap.style.height=`${h}px`;return true;
-    };
-    const redraw=()=>{
-      if(!sync())return;
-      const ctx=canvas.getContext('2d');if(!ctx)return;
-      const dpr=Math.max(1,Number(window.devicePixelRatio)||1);
-      ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,canvas.width,canvas.height);ctx.setTransform(dpr,0,0,dpr,0,0);
-      for(const stroke of reviewStrokes)drawStoredStroke(ctx,canvas.clientWidth||1,canvas.clientHeight||1,stroke);
-    };
-    const point=(e)=>{const rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return null;return[clamp((e.clientX-rect.left)/rect.width,0,1),clamp((e.clientY-rect.top)/rect.height,0,1)];};
-    const startReviewInk=(e)=>{
-      if(e.pointerType==='touch')return;
-      if(e.pointerType==='mouse'&&e.button!==0&&e.buttons!==1)return;
-      const pt=point(e);if(!pt)return;e.preventDefault();e.stopPropagation();
-      try{canvas.setPointerCapture?.(e.pointerId);}catch{}
-      reviewDrawing=true;reviewPointer=e.pointerId;
-      const px=reviewTool==='eraser'?22:4;
-      reviewStroke={t:reviewTool,w:Math.max(.0008,px/Math.max(1,canvas.clientWidth||1)),p:[pt]};
-      reviewStrokes.push(reviewStroke);redraw();
-    };
-    const moveReviewInk=(e)=>{
-      if(!reviewDrawing||e.pointerId!==reviewPointer||!reviewStroke||e.pointerType==='touch')return;
-      e.preventDefault();e.stopPropagation();
-      const packets=typeof e.getCoalescedEvents==='function'?e.getCoalescedEvents():[e];
-      for(const ev of packets){const pt=point(ev);if(!pt)continue;const last=reviewStroke.p[reviewStroke.p.length-1];if(!last||Math.hypot(pt[0]-last[0],pt[1]-last[1])>=.00035)reviewStroke.p.push(pt);}redraw();
-    };
-    const endReviewInk=(e)=>{
-      if(!reviewDrawing||(reviewPointer!==null&&e.pointerId!==reviewPointer))return;
-      if(e.pointerType!=='touch'){e.preventDefault();e.stopPropagation();}
-      reviewDrawing=false;reviewPointer=null;reviewStroke=null;writeReviewInkV86(r.id,id,reviewStrokes);
-    };
-    pen.onclick=()=>{reviewTool='pen';pen.classList.add('active-tool');eraser.classList.remove('active-tool');};
-    eraser.onclick=()=>{reviewTool='eraser';eraser.classList.add('active-tool');pen.classList.remove('active-tool');};
-    clear.onclick=()=>{if(!confirm('이 리뷰 문제의 필기를 지울까?'))return;reviewStrokes=[];writeReviewInkV86(r.id,id,reviewStrokes);redraw();};
-    canvas.onpointerdown=startReviewInk;canvas.onpointermove=moveReviewInk;canvas.onpointerup=endReviewInk;canvas.onpointercancel=endReviewInk;canvas.onlostpointercapture=endReviewInk;
-    if('onpointerrawupdate' in canvas)canvas.onpointerrawupdate=moveReviewInk;
-    img.addEventListener('load',redraw);
-    readReviewInkV86(r.id,id).then((strokes)=>{reviewStrokes=Array.isArray(strokes)?strokes:[];requestAnimationFrame(redraw);});
-    if(typeof ResizeObserver!=='undefined'){const ro=new ResizeObserver(()=>requestAnimationFrame(redraw));ro.observe(img);}
+      const scroller=document.createElement('div');scroller.className='real-exam-review-scroller-v87';
+      const wrap=document.createElement('div');wrap.className='real-exam-review-image-wrap-v86 real-exam-review-stage-v87';
+      const img=document.createElement('img');img.loading='eager';img.decoding='async';img.src=p.imageData||'';img.alt=`${index+1}번 문제`;
+      const canvas=document.createElement('canvas');canvas.className='real-exam-review-ink-canvas-v86';canvas.setAttribute('aria-label',`${index+1}번 리뷰 필기 캔버스`);
+      wrap.append(img,canvas);scroller.appendChild(wrap);card.appendChild(scroller);
 
-    const ans=document.createElement('div'); ans.className='real-exam-review-answer-v79';
-    const mine=Number(r.answers?.[id]||0);
-    ans.innerHTML=`<span>내 답: ${mine?choiceLabel(mine):'미응답'}</span><span>정답: ${choiceLabel(p.answer)}</span>`;
-    card.appendChild(ans);
-    const pages=typeof problemExplanationPagesV61==='function'?problemExplanationPagesV61(p):(p.explanationImageData?[p.explanationImageData]:[]);
-    if(pages.length||String(p.explanation||'').trim()){
-      const exp=document.createElement('div'); exp.className='real-exam-review-explanation-v79';
-      const strong=document.createElement('strong'); strong.textContent='해설'; exp.appendChild(strong);
-      pages.forEach((src,i)=>{ const x=document.createElement('img');x.loading='lazy';x.src=src;x.alt=`해설 ${i+1}쪽`;exp.appendChild(x); });
-      if(String(p.explanation||'').trim()){ const t=document.createElement('p');t.textContent=p.explanation.trim();exp.appendChild(t); }
-      card.appendChild(exp);
-    }
+      const sync=()=>{
+        const w=Math.max(1,Math.round(img.clientWidth||img.getBoundingClientRect().width||0));
+        const h=Math.max(1,Math.round(img.clientHeight||img.getBoundingClientRect().height||0));
+        if(w<=1||h<=1)return false;
+        const dpr=Math.max(1,Number(window.devicePixelRatio)||1),bw=Math.round(w*dpr),bh=Math.round(h*dpr);
+        if(canvas.width!==bw||canvas.height!==bh){canvas.width=bw;canvas.height=bh;}
+        canvas.style.width=`${w}px`;canvas.style.height=`${h}px`;wrap.style.width=`${w}px`;wrap.style.height=`${h}px`;return true;
+      };
+      const redrawNow=()=>{
+        if(!sync())return;
+        const ctx=canvas.getContext('2d');if(!ctx)return;
+        const dpr=Math.max(1,Number(window.devicePixelRatio)||1);
+        ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,canvas.width,canvas.height);ctx.setTransform(dpr,0,0,dpr,0,0);
+        for(const stroke of reviewStrokes)drawStoredStroke(ctx,canvas.clientWidth||1,canvas.clientHeight||1,stroke);
+      };
+      const scheduleReviewRedrawV87=()=>{
+        if(reviewRaf)return;
+        reviewRaf=requestAnimationFrame(()=>{reviewRaf=0;redrawNow();});
+      };
+      const point=(e)=>{const rect=canvas.getBoundingClientRect();if(!rect.width||!rect.height)return null;return[clamp((e.clientX-rect.left)/rect.width,0,1),clamp((e.clientY-rect.top)/rect.height,0,1)];};
+      const setReviewZoomV87=(value,clientX=null,clientY=null)=>{
+        const oldZoom=reviewZoom;
+        const next=clamp(Number(value)||1,.25,5);
+        if(!scroller.clientWidth)return;
+        let contentX=null,contentY=null,viewX=null,viewY=null;
+        if(Number.isFinite(clientX)&&Number.isFinite(clientY)){
+          const rect=scroller.getBoundingClientRect();
+          viewX=clamp(clientX-rect.left,0,rect.width);
+          viewY=clamp(clientY-rect.top,0,rect.height);
+          contentX=(scroller.scrollLeft+viewX)/Math.max(.001,oldZoom);
+          contentY=(scroller.scrollTop+viewY)/Math.max(.001,oldZoom);
+        }
+        reviewZoom=next;
+        wrap.style.width=`${reviewZoom*100}%`;
+        zoomLabel.textContent=`${Math.round(reviewZoom*100)}%`;
+        requestAnimationFrame(()=>{
+          sync();scheduleReviewRedrawV87();
+          if(contentX!==null){
+            scroller.scrollLeft=Math.max(0,contentX*reviewZoom-viewX);
+            scroller.scrollTop=Math.max(0,contentY*reviewZoom-viewY);
+          }
+        });
+      };
+      const zoomReviewCenterV87=(delta)=>{
+        const rect=scroller.getBoundingClientRect();
+        setReviewZoomV87(reviewZoom+delta,rect.left+rect.width/2,rect.top+rect.height/2);
+      };
+      const fitReviewZoomV87=()=>{
+        if(!img.naturalWidth||!img.naturalHeight||!scroller.clientWidth||!scroller.clientHeight){setReviewZoomV87(1);return;}
+        const baseWidth=scroller.clientWidth;
+        const baseHeight=baseWidth*(img.naturalHeight/img.naturalWidth);
+        const fitByHeight=(scroller.clientHeight-8)/Math.max(1,baseHeight);
+        setReviewZoomV87(Math.min(1,Math.max(.25,fitByHeight)));
+        scroller.scrollLeft=0;scroller.scrollTop=0;
+      };
+      const reviewTouchStartV87=(e)=>{
+        if(e.pointerType!=='touch')return false;
+        e.preventDefault();e.stopPropagation();
+        try{canvas.setPointerCapture?.(e.pointerId);}catch{}
+        reviewTouches.set(e.pointerId,{x:e.clientX,y:e.clientY});
+        if(reviewTouches.size===1){
+          reviewGesture={type:'pan',id:e.pointerId,x:e.clientX,y:e.clientY,left:scroller.scrollLeft,top:scroller.scrollTop};
+        }else if(reviewTouches.size>=2){
+          const pts=[...reviewTouches.values()].slice(0,2);
+          const dx=pts[1].x-pts[0].x,dy=pts[1].y-pts[0].y;
+          reviewGesture={type:'pinch',distance:Math.max(1,Math.hypot(dx,dy)),zoom:reviewZoom,centerX:(pts[0].x+pts[1].x)/2,centerY:(pts[0].y+pts[1].y)/2};
+        }
+        return true;
+      };
+      const reviewTouchMoveV87=(e)=>{
+        if(e.pointerType!=='touch'||!reviewTouches.has(e.pointerId))return false;
+        e.preventDefault();e.stopPropagation();
+        reviewTouches.set(e.pointerId,{x:e.clientX,y:e.clientY});
+        if(reviewTouches.size>=2){
+          const pts=[...reviewTouches.values()].slice(0,2);
+          const dx=pts[1].x-pts[0].x,dy=pts[1].y-pts[0].y;
+          const distance=Math.max(1,Math.hypot(dx,dy));
+          if(!reviewGesture||reviewGesture.type!=='pinch'){
+            reviewGesture={type:'pinch',distance,zoom:reviewZoom,centerX:(pts[0].x+pts[1].x)/2,centerY:(pts[0].y+pts[1].y)/2};
+          }
+          const centerX=(pts[0].x+pts[1].x)/2,centerY=(pts[0].y+pts[1].y)/2;
+          setReviewZoomV87(reviewGesture.zoom*(distance/reviewGesture.distance),centerX,centerY);
+        }else if(reviewGesture?.type==='pan'&&reviewGesture.id===e.pointerId){
+          scroller.scrollLeft=reviewGesture.left-(e.clientX-reviewGesture.x);
+          scroller.scrollTop=reviewGesture.top-(e.clientY-reviewGesture.y);
+        }
+        return true;
+      };
+      const reviewTouchEndV87=(e)=>{
+        if(e.pointerType!=='touch')return false;
+        if(reviewTouches.has(e.pointerId)){
+          e.preventDefault();e.stopPropagation();
+          reviewTouches.delete(e.pointerId);
+          try{canvas.releasePointerCapture?.(e.pointerId);}catch{}
+          if(reviewTouches.size===1){
+            const [id0,p0]=reviewTouches.entries().next().value;
+            reviewGesture={type:'pan',id:id0,x:p0.x,y:p0.y,left:scroller.scrollLeft,top:scroller.scrollTop};
+          }else if(reviewTouches.size===0)reviewGesture=null;
+          return true;
+        }
+        return false;
+      };
+      const startReviewInk=(e)=>{
+        if(reviewTouchStartV87(e))return;
+        if(!reviewPenLikeV87(e))return;
+        if(e.pointerType==='mouse'&&e.button!==0&&e.buttons!==1)return;
+        const pt=point(e);if(!pt)return;
+        e.preventDefault();e.stopPropagation();
+        try{canvas.setPointerCapture?.(e.pointerId);}catch{}
+        reviewDrawing=true;reviewPointer=e.pointerId;
+        const px=reviewTool==='eraser'?22:4;
+        reviewStroke={t:reviewTool,w:Math.max(.0008,px/Math.max(1,canvas.clientWidth||1)),p:[pt]};
+        reviewStrokes.push(reviewStroke);scheduleReviewRedrawV87();
+      };
+      const moveReviewInk=(e)=>{
+        if(reviewTouchMoveV87(e))return;
+        if(!reviewDrawing||e.pointerId!==reviewPointer||!reviewStroke||!reviewPenLikeV87(e))return;
+        e.preventDefault();e.stopPropagation();
+        const packets=typeof e.getCoalescedEvents==='function'?e.getCoalescedEvents():[e];
+        for(const ev of packets){
+          const pt=point(ev);if(!pt)continue;
+          const last=reviewStroke.p[reviewStroke.p.length-1];
+          if(!last||Math.hypot(pt[0]-last[0],pt[1]-last[1])>=.00035)reviewStroke.p.push(pt);
+        }
+        scheduleReviewRedrawV87();
+      };
+      const endReviewInk=(e)=>{
+        if(reviewTouchEndV87(e))return;
+        if(!reviewDrawing||(reviewPointer!==null&&e.pointerId!==reviewPointer))return;
+        if(e.pointerType!=='touch'){e.preventDefault();e.stopPropagation();}
+        try{canvas.releasePointerCapture?.(e.pointerId);}catch{}
+        reviewDrawing=false;reviewPointer=null;reviewStroke=null;
+        scheduleReviewRedrawV87();
+        writeReviewInkV86(r.id,id,reviewStrokes);
+      };
+      pen.onclick=()=>{reviewTool='pen';pen.classList.add('active-tool');eraser.classList.remove('active-tool');};
+      eraser.onclick=()=>{reviewTool='eraser';eraser.classList.add('active-tool');pen.classList.remove('active-tool');};
+      clear.onclick=()=>{if(!confirm('이 리뷰 문제의 필기를 지울까?'))return;reviewStrokes=[];writeReviewInkV86(r.id,id,reviewStrokes);scheduleReviewRedrawV87();};
+      zoomOut.onclick=()=>zoomReviewCenterV87(reviewZoom<=.35?-.05:-.20);
+      zoomIn.onclick=()=>zoomReviewCenterV87(reviewZoom<.35?.05:.20);
+      fit.onclick=fitReviewZoomV87;
+      canvas.onpointerdown=startReviewInk;
+      canvas.onpointermove=moveReviewInk;
+      canvas.onpointerup=endReviewInk;
+      canvas.onpointercancel=endReviewInk;
+      canvas.onlostpointercapture=endReviewInk;
+      img.addEventListener('load',()=>{setReviewZoomV87(1);scheduleReviewRedrawV87();},{once:false});
+      readReviewInkV86(r.id,id).then((strokes)=>{reviewStrokes=Array.isArray(strokes)?strokes:[];scheduleReviewRedrawV87();});
+      if(typeof ResizeObserver!=='undefined'){
+        const ro=new ResizeObserver(()=>scheduleReviewRedrawV87());
+        ro.observe(img);
+      }
+
+      const ans=document.createElement('div');ans.className='real-exam-review-answer-v79';
+      const mine=Number(r.answers?.[id]||0);
+      ans.innerHTML=`<span>내 답: ${mine?choiceLabel(mine):'미응답'}</span><span>정답: ${choiceLabel(p.answer)}</span>`;
+      card.appendChild(ans);
+      const pages=typeof problemExplanationPagesV61==='function'?problemExplanationPagesV61(p):(p.explanationImageData?[p.explanationImageData]:[]);
+      if(pages.length||String(p.explanation||'').trim()){
+        const exp=document.createElement('div');exp.className='real-exam-review-explanation-v79';
+        const strong=document.createElement('strong');strong.textContent='해설';exp.appendChild(strong);
+        pages.forEach((src,i)=>{const x=document.createElement('img');x.loading='lazy';x.decoding='async';x.src=src;x.alt=`해설 ${i+1}쪽`;exp.appendChild(x);});
+        if(String(p.explanation||'').trim()){const t=document.createElement('p');t.textContent=p.explanation.trim();exp.appendChild(t);}
+        card.appendChild(exp);
+      }
+    })().catch(err=>{
+      console.error('v87 review card load failed',err);
+      if(renderToken===reviewRenderTokenV87&&card.isConnected){loading.textContent='문제 불러오기 중 오류가 났어.';}
+    });
     return card;
   }
+
   function renderReview(){
-    const r=selectedResult(); renderReviewSummary(r);
-    const host=q('realExamReviewListV79'); if(!host)return;
+    const token=++reviewRenderTokenV87;
+    const r=selectedResult();renderReviewSummary(r);
+    const host=q('realExamReviewListV79');if(!host)return;
     host.innerHTML='';
     if(!r){host.innerHTML='<p class="hint">리뷰할 기록이 없어.</p>';return;}
     const ids=reviewMode==='unanswered'?(r.unansweredIds||[]):(r.wrongIds||[]);
     q('realExamReviewWrongV79')?.classList.toggle('secondary',reviewMode!=='wrong');
     q('realExamReviewUnansweredV79')?.classList.toggle('secondary',reviewMode!=='unanswered');
     if(!ids.length){host.innerHTML=`<p class="hint">${reviewMode==='wrong'?'틀린 문제가 없어.':'안 푼 문제가 없어.'}</p>`;return;}
-    ids.forEach(id=>host.appendChild(makeReviewCard(r,id)));
+
+    let cursor=0;
+    let observer=null;
+    const appendBatch=()=>{
+      if(token!==reviewRenderTokenV87)return;
+      observer?.disconnect?.();observer=null;
+      host.querySelector('.real-exam-review-more-v87')?.remove();
+      const end=Math.min(ids.length,cursor+3);
+      for(;cursor<end;cursor++)host.appendChild(makeReviewCard(r,ids[cursor],token));
+      if(cursor>=ids.length)return;
+      const more=document.createElement('button');
+      more.type='button';more.className='secondary real-exam-review-more-v87';
+      more.textContent=`다음 리뷰 문제 불러오기 (${cursor}/${ids.length})`;
+      more.onclick=appendBatch;host.appendChild(more);
+      if(typeof IntersectionObserver!=='undefined'){
+        observer=new IntersectionObserver((entries)=>{
+          if(entries.some(x=>x.isIntersecting)){observer.disconnect();observer=null;appendBatch();}
+        },{rootMargin:'500px 0px'});
+        observer.observe(more);
+      }
+    };
+    appendBatch();
   }
   function deleteReview(){
     const r=selectedResult(); if(!r){showToast('삭제할 실전 리뷰 기록이 없어');return;}
@@ -9530,5 +9725,5 @@ window.psatOrderedReverseV77 = true;
     if(q('realExamViewV79')?.classList.contains('active') && active) showActive();
   },700);
 
-  window.psatRealExamV85={startExam,finalizeExam,results,active:()=>active,goToIndex,setExamZoom:setZoom,fitExamZoom:fitZoom,openLatestReview};
+  window.psatRealExamV87={startExam,finalizeExam,results,active:()=>active,goToIndex,setExamZoom:setZoom,fitExamZoom:fitZoom,openLatestReview};
 })();

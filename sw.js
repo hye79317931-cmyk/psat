@@ -1,12 +1,12 @@
 'use strict';
 
-const CACHE_NAME = 'psat-random-note-v86';
+const CACHE_NAME = 'psat-random-note-v87';
 const ASSETS = [
-  './?v=86',
+  './?v=87',
   './index.html',
-  './styles.css?v=86',
-  './app.js?v=86',
-  './manifest.webmanifest?v=86',
+  './styles.css?v=87',
+  './app.js?v=87',
+  './manifest.webmanifest?v=87',
   './icon-192.png',
   './icon-512.png'
 ];
@@ -17,43 +17,44 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) => Promise.all(
-      keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
-    ))
-  );
-  self.clients.claim();
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((key) => key.startsWith('psat-random-note-') && key !== CACHE_NAME).map((key) => caches.delete(key)));
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
-  // v78: installed PWA navigations always try the latest network page first.
-  // This prevents an old installed start URL such as ?v=67 from pinning the app to stale HTML.
   if (event.request.mode === 'navigate') {
-    event.respondWith(
-      fetch(event.request, { cache: 'no-store' })
-        .then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', clone));
-          return response;
-        })
-        .catch(async () => (
-          (await caches.match('./index.html')) ||
-          (await caches.match('./?v=86'))
-        ))
-    );
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(event.request, { cache: 'no-store' });
+        if (!response || !response.ok) throw new Error(`navigation HTTP ${response?.status || 0}`);
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', clone)).catch(() => {});
+        return response;
+      } catch (err) {
+        return (await caches.match('./index.html')) ||
+          (await caches.match('./?v=87')) ||
+          Response.error();
+      }
+    })());
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((response) => {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        return response;
-      });
-    })
-  );
+  event.respondWith((async () => {
+    const cached = await caches.match(event.request);
+    if (cached) return cached;
+    try {
+      const response = await fetch(event.request);
+      if (!response || !response.ok) throw new Error(`asset HTTP ${response?.status || 0}`);
+      const clone = response.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone)).catch(() => {});
+      return response;
+    } catch (err) {
+      return cached || Response.error();
+    }
+  })());
 });
