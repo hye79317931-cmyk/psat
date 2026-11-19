@@ -1,1 +1,1 @@
-PSAT v88: removed device sync and added adjustable pen size in real exam review.
+PSAT v89: automatically apply PWA updates after leaving solve and review screens.

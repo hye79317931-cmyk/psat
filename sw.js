@@ -1,19 +1,29 @@
 'use strict';
 
-const CACHE_NAME = 'psat-random-note-v88';
+const RELEASE = 89;
+const CACHE_NAME = `psat-random-note-v${RELEASE}`;
+const APP_SHELL = new URL('index.html', self.registration.scope);
+const APP_ENTRY = new URL(self.registration.scope);
 const ASSETS = [
-  './?v=88',
-  './index.html',
-  './styles.css?v=88',
-  './app.js?v=88',
-  './manifest.webmanifest?v=88',
+  `./styles.css?v=${RELEASE}`,
+  `./app.js?v=${RELEASE}`,
+  `./manifest.webmanifest?v=${RELEASE}`,
   './icon-192.png',
   './icon-512.png'
 ];
+const assetUrls = new Set(ASSETS.map((asset) => new URL(asset, APP_ENTRY).href));
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
-  self.skipWaiting();
+  event.waitUntil((async () => {
+    const shell = await fetch(APP_SHELL, { cache: 'no-store' });
+    if (!shell.ok || !(await shell.clone().text()).includes(`src="app.js?v=${RELEASE}"`)) {
+      throw new Error('App shell does not match the service worker release');
+    }
+    const cache = await caches.open(CACHE_NAME);
+    await cache.addAll(ASSETS.map((asset) => new Request(new URL(asset, APP_ENTRY), { cache: 'no-store' })));
+    await cache.put(APP_SHELL, shell);
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
@@ -24,37 +34,24 @@ self.addEventListener('activate', (event) => {
   })());
 });
 
-self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return;
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'PSAT_GET_RELEASE') {
+    event.source?.postMessage({ type: 'PSAT_RELEASE', release: RELEASE });
+  }
+});
 
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+  if (request.method !== 'GET') return;
   if (event.request.mode === 'navigate') {
-    event.respondWith((async () => {
-      try {
-        const response = await fetch(event.request, { cache: 'no-store' });
-        if (!response || !response.ok) throw new Error(`navigation HTTP ${response?.status || 0}`);
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put('./index.html', clone)).catch(() => {});
-        return response;
-      } catch (err) {
-        return (await caches.match('./index.html')) ||
-          (await caches.match('./?v=88')) ||
-          Response.error();
-      }
-    })());
+    const url = new URL(request.url);
+    if (url.origin === APP_ENTRY.origin && [APP_ENTRY.pathname, APP_SHELL.pathname].includes(url.pathname)) {
+      event.respondWith(caches.match(APP_SHELL, { cacheName: CACHE_NAME }).then((shell) => shell || fetch(request)));
+    }
     return;
   }
 
-  event.respondWith((async () => {
-    const cached = await caches.match(event.request);
-    if (cached) return cached;
-    try {
-      const response = await fetch(event.request);
-      if (!response || !response.ok) throw new Error(`asset HTTP ${response?.status || 0}`);
-      const clone = response.clone();
-      caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone)).catch(() => {});
-      return response;
-    } catch (err) {
-      return cached || Response.error();
-    }
-  })());
+  if (assetUrls.has(request.url)) {
+    event.respondWith(caches.match(request, { cacheName: CACHE_NAME }).then((asset) => asset || fetch(request)));
+  }
 });

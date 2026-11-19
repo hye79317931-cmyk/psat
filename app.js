@@ -7,6 +7,10 @@ const SLOW_MS = 180000;
 const WRONG_CLEAR_STREAK = 2;
 const SUBJECT_GROUPS = ['언어', '자료', '상황'];
 const PAUSED_SESSION_KEY = 'psat-paused-session-v25';
+const PWA_RELEASE = Number(new URL(document.currentScript.src).searchParams.get('v'));
+const PWA_RELOAD_KEY = 'psat-pwa-reloaded-release';
+let schedulePwaReload = () => {};
+const pendingLocalWrites = new Set();
 
 const $ = (id) => document.getElementById(id);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -186,12 +190,23 @@ async function tx(storeName, mode, action) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(storeName, mode);
+    if (mode === 'readwrite') trackLocalWrite(transaction);
     const store = transaction.objectStore(storeName);
     let result;
     transaction.oncomplete = () => resolve(result);
     transaction.onerror = () => reject(transaction.error);
     result = action(store);
   });
+}
+
+function trackLocalWrite(transaction) {
+  pendingLocalWrites.add(transaction);
+  const finished = () => {
+    pendingLocalWrites.delete(transaction);
+    schedulePwaReload();
+  };
+  transaction.addEventListener('complete', finished, { once: true });
+  transaction.addEventListener('abort', finished, { once: true });
 }
 
 function requestToPromise(request) {
@@ -2840,6 +2855,7 @@ async function putBatchNativeV63(storeName, rows) {
   const db = await openDb();
   await new Promise((resolve, reject) => {
     const txv = db.transaction(storeName, 'readwrite');
+    trackLocalWrite(txv);
     const store = txv.objectStore(storeName);
     txv.oncomplete = () => resolve();
     txv.onerror = () => reject(txv.error);
@@ -3401,13 +3417,91 @@ function bindEvents() {
 }
 
 async function registerServiceWorker() {
-  if ('serviceWorker' in navigator) {
-    try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=88', { updateViaCache: 'none' });
-      await reg.update();
-    } catch (err) {
-      console.warn('Service worker registration failed', err);
+  const workers = navigator.serviceWorker;
+  if (!workers) return;
+
+  let pendingRelease = 0;
+  let reloadTimer = null;
+  let reloading = false;
+  const protectedScreen = [
+    '#solveView.active #solvePanel:not(.hidden)',
+    '#exitSummaryOverlayV49:not(.hidden)',
+    '#realExamViewV79.active #realExamPanelV79:not(.hidden)',
+    '#realExamViewV79.active #realExamResultV79:not(.hidden)',
+    '#wrongView.active',
+    '#realExamReviewViewV79.active'
+  ].join(', ');
+
+  const screenObserver = new MutationObserver(() => schedulePwaReload());
+  schedulePwaReload = () => {
+    if (!pendingRelease || reloading || reloadTimer !== null) return;
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null;
+      if (document.visibilityState !== 'visible' || document.fullscreenElement ||
+          state.current || document.querySelector(protectedScreen) || pendingLocalWrites.size) return;
+
+      try {
+        if (Number(sessionStorage.getItem(PWA_RELOAD_KEY)) >= pendingRelease) return;
+        sessionStorage.setItem(PWA_RELOAD_KEY, String(pendingRelease));
+      } catch (err) {} // The per-page guard still applies if storage is unavailable.
+      reloading = true;
+      screenObserver.disconnect();
+      location.reload();
+    }, 0);
+  };
+
+  const requestRelease = () => {
+    const controller = workers.controller;
+    if (controller?.state === 'activated') {
+      controller.postMessage({ type: 'PSAT_GET_RELEASE' });
+    } else if (controller?.state === 'activating') {
+      controller.addEventListener('statechange', requestRelease, { once: true });
     }
+  };
+  workers.addEventListener('message', (event) => {
+    if (event.source !== workers.controller || event.data?.type !== 'PSAT_RELEASE') return;
+    const release = event.data.release;
+    if (!Number.isInteger(release) || release <= PWA_RELEASE || release <= pendingRelease) return;
+    if (!pendingRelease) {
+      for (const element of [...els.views, els.solvePanel, $('exitSummaryOverlayV49'),
+        $('realExamPanelV79'), $('realExamResultV79')]) {
+        if (element) screenObserver.observe(element, { attributeFilter: ['class'] });
+      }
+    }
+    pendingRelease = release;
+    schedulePwaReload();
+  });
+  workers.addEventListener('controllerchange', requestRelease);
+  document.addEventListener('fullscreenchange', schedulePwaReload);
+  requestRelease();
+
+  try {
+    // Keep the script URL stable so installed clients discover releases on update().
+    const registration = await workers.register('./sw.js', { updateViaCache: 'none' });
+    const watchInstallation = () => {
+      registration.installing?.addEventListener('statechange', (event) => {
+        if (event.target.state === 'activated') requestRelease();
+      });
+    };
+    registration.addEventListener('updatefound', watchInstallation);
+    watchInstallation();
+
+    const checkForUpdate = () => registration.update().catch((err) => {
+      console.warn('Service worker update check failed', err);
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      requestRelease();
+      schedulePwaReload();
+      checkForUpdate();
+    });
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted) checkForUpdate();
+    });
+    window.addEventListener('online', checkForUpdate);
+    checkForUpdate();
+  } catch (err) {
+    console.warn('Service worker registration failed', err);
   }
 }
 
@@ -3417,12 +3511,12 @@ async function init() {
   resetForm();
   updateSizeLabels();
   setDrawEnabled(true);
+  void registerServiceWorker();
   await openDb();
   // v63: 대용량 문제은행이 브라우저 저장공간 정리 대상이 되지 않도록 영구 저장을 요청.
   try { await navigator.storage?.persist?.(); } catch {}
   await refresh();
   updateContinueButton();
-  await registerServiceWorker();
 }
 
 init().catch((err) => {
@@ -6996,6 +7090,7 @@ window.psatOrderedReverseV77 = true;
       const db=await openExamInkDb();
       await new Promise((resolve,reject)=>{
         const tx=db.transaction(EXAM_INK_STORE,'readwrite');
+        trackLocalWrite(tx);
         tx.oncomplete=()=>resolve(); tx.onerror=()=>reject(tx.error);
         tx.objectStore(EXAM_INK_STORE).put({key,examId:reviewInkExamIdV86(resultId),problemId,strokes});
       });
@@ -7050,6 +7145,7 @@ window.psatOrderedReverseV77 = true;
     const db=await openExamInkDb();
     return new Promise((resolve,reject)=>{
       const tx=db.transaction(EXAM_INK_STORE,'readwrite');
+      trackLocalWrite(tx);
       tx.oncomplete=()=>resolve(); tx.onerror=()=>reject(tx.error);
       tx.objectStore(EXAM_INK_STORE).put({key:examInkKey(examId,problemId),examId,problemId,strokes});
     });
@@ -7060,6 +7156,7 @@ window.psatOrderedReverseV77 = true;
       const db=await openExamInkDb();
       await new Promise((resolve,reject)=>{
         const tx=db.transaction(EXAM_INK_STORE,'readwrite');
+        trackLocalWrite(tx);
         const store=tx.objectStore(EXAM_INK_STORE);
         const req=store.openCursor();
         req.onsuccess=()=>{const c=req.result;if(!c)return;if(c.value?.examId===examId)c.delete();c.continue();};
