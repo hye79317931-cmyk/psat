@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#121826" />
   <title>PSAT 랜덤 오답노트</title>
-  <link rel="manifest" href="manifest.webmanifest?v=87" />
+  <link rel="manifest" href="manifest.webmanifest?v=88" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=87" />
+  <link rel="stylesheet" href="styles.css?v=88" />
 </head>
 <body>
   <header class="app-header">
@@ -476,35 +476,6 @@
         <div id="backupPartsV65" class="backup-parts-v65 hidden"></div>
         <p class="hint">v65 백업은 대용량에서 멈추지 않게 여러 파일로 나눌 수 있어. 여러 파일이면 전부 내려받고, 복원할 때 전부 한꺼번에 선택해.</p>
       </section>
-      
-      <section class="card" id="firebaseSyncCardV45">
-        <h2>폰 · 태블릿 실시간 동기화</h2>
-        <p id="firebaseSyncStatusV45" class="hint">Firebase 설정 전</p>
-
-        <details class="sync-details-v45">
-          <summary>Firebase 설정 완료</summary>
-          <p class="hint">v65: 평소 동기화는 작은 인덱스만 확인하고 변경된 문제만 1개씩 주고받아. 백업은 압축하지 않고 직접저장/분할해서 속도와 안정성을 우선해.</p>
-        </details>
-
-        <div class="grid two sync-auth-grid-v45">
-          <label>이메일
-            <input id="firebaseEmailV45" type="email" autocomplete="username" placeholder="동기화 계정 이메일">
-          </label>
-          <label>비밀번호
-            <input id="firebasePasswordV45" type="password" autocomplete="current-password" placeholder="6자 이상">
-          </label>
-        </div>
-
-        <div class="row wrap">
-          <button id="firebaseSignupBtnV45" class="secondary" type="button">처음 계정 만들기</button>
-          <button id="firebaseLoginBtnV45" type="button">로그인 · 동기화 시작</button>
-          <button id="firebaseLogoutBtnV45" class="secondary hidden" type="button">로그아웃</button>
-          <button id="firebaseRepairBtnV60" type="button">동기화 복구 · 정상화</button>
-          <button id="firebasePushBtnV45" class="secondary" type="button">이 폰 데이터 올리기</button>
-          <button id="firebasePullBtnV45" class="secondary" type="button">클라우드 데이터 받기</button>
-        </div>
-        <p class="hint">같은 Firebase 설정 + 같은 이메일 계정으로 로그인한 폰과 태블릿만 같은 데이터를 사용해.</p>
-      </section>
 
       <section class="card danger-zone">
         <h2>초기화</h2>
@@ -515,10 +486,7 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
-  <script src="app.js?v=87"></script>
+  <script src="app.js?v=88"></script>
 
   <div id="exitSummaryOverlayV49" class="exit-summary-overlay-v49 hidden" role="dialog" aria-modal="true" aria-labelledby="exitSummaryTitleV49">
     <div class="exit-summary-card-v49">

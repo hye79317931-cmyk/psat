@@ -1788,49 +1788,6 @@ body.psat-exp-v40-open {
 }
 
 
-/* === v45 Firebase 실시간 동기화 === */
-#firebaseSyncCardV45 textarea {
-  width: 100%;
-  min-height: 150px;
-  resize: vertical;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.45;
-}
-.sync-details-v45 {
-  margin: 10px 0 14px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 10px 12px;
-  background: rgba(255,255,255,.04);
-}
-.sync-details-v45 summary {
-  cursor: pointer;
-  font-weight: 900;
-}
-.sync-auth-grid-v45 {
-  margin-top: 10px;
-}
-#firebaseSyncStatusV45.sync-ok-v45 {
-  color: var(--accent);
-  font-weight: 900;
-}
-
-#firebaseSyncStatusV45.sync-error-v46 {
-  color: #c62828 !important;
-  font-weight: 900 !important;
-}
-
-/* === v47 sync status === */
-#firebaseSyncStatusV45.sync-error-v46 {
-  color:#c62828 !important;
-  font-weight:900 !important;
-}
-
-/* v48 incremental sync status */
-#firebaseSyncStatusV45.sync-error-v46{color:#c62828!important;font-weight:900!important;}
-
-
 /* === v49 중단/나가기 중간결과 팝업 === */
 .exit-summary-overlay-v49 {
   position: fixed;
@@ -2468,6 +2425,15 @@ body > #exitSummaryOverlayV49 {
   margin: 7px 0;
 }
 .real-exam-review-ink-toolbar-v86 button { min-height: 34px; padding: 6px 10px; font-size: 12px; }
+.real-exam-review-pen-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.real-exam-review-pen-size input[type=range] { min-width: 0; }
 .real-exam-review-ink-toolbar-v86 .active-tool { outline: 2px solid var(--accent); outline-offset: 1px; }
 .real-exam-review-image-wrap-v86 {
   position: relative;

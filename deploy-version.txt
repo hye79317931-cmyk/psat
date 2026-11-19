@@ -1,1 +1,1 @@
-PSAT v87 real exam review stability: review cards load in small batches, missing review problems retry directly from IndexedDB, review S Pen redraw is requestAnimationFrame-throttled, review images support button zoom/fit plus one-finger pan and two-finger pinch zoom, and PWA navigation falls back to cached app shell on HTTP errors; p86 90-minute exam and existing data behavior preserved
+PSAT v88: removed device sync and added adjustable pen size in real exam review.
